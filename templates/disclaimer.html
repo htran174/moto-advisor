@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+  <section>
+    <h2>Disclaimer</h2>
+    <ul>
+      <li>We don’t store your data. Inputs are processed in memory and discarded.</li>
+      <li>We don’t sell or endorse products. External links are for convenience.</li>
+      <li>Specs shown may be AI-reported. Always verify on the manufacturer’s site.</li>
+      <li>Riding involves risk. Wear proper gear and follow local laws/training.</li>
+    </ul>
+
+    <form action="{{ url_for('advisor') }}" method="get">
+      <button type="submit">I understand</button>
+    </form>
+  </section>
+{% endblock %}

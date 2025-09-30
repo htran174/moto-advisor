@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+  <section>
+    <h2>Welcome to {{ app_title }}</h2>
+    <p>
+      A simple, beginner-friendly guide to help you pick your first motorcycle and essential gear.
+      No login. No tracking. We’ll ask a few basics and show clear, image-backed suggestions
+      with links to official manufacturer and trusted retailer pages.
+    </p>
+
+    <form action="{{ url_for('disclaimer') }}" method="get">
+      <button type="submit">Start</button>
+    </form>
+  </section>
+{% endblock %}
