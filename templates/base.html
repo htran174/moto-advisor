@@ -4,21 +4,27 @@
   <meta charset="utf-8">
   <title>{{ app_title }} — {{ page_title }}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Beginner motorcycle advisor: bikes, gear, and safety guidance.">
 </head>
-<body>
-  <header>
-    <h1><a href="{{ url_for('home') }}" aria-label="Go to home">{{ app_title }}</a></h1>
-    <hr>
+<body style="margin: 0; font-family: sans-serif; background-color: #a11; color: white;">
+
+  <!-- Header -->
+  <header style="background-color: #600; padding: 1rem; text-align: center;">
+    <h1 style="margin: 0;">
+      <a href="{{ url_for('home') }}" style="color: white; text-decoration: none;">
+        {{ app_title }}
+      </a>
+    </h1>
   </header>
 
-  <main>
+  <!-- Main content -->
+  <main style="padding: 2rem; min-height: 70vh; display: flex; justify-content: center; align-items: center;">
     {% block content %}{% endblock %}
   </main>
 
-  <hr>
-  <footer>
-    <p><small>No accounts. No data stored. Educational purposes only.</small></p>
+  <!-- Footer (shared by all pages) -->
+  <footer style="background-color: #222; color: white; padding: 1rem; text-align: center;">
+    <p>© 2025 RideReady | Placeholder company info | Contact: info@example.com</p>
   </footer>
+
 </body>
 </html>
