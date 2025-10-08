@@ -1,28 +1,53 @@
 {% extends "base.html" %}
 {% block content %}
-  <section style="display: flex; justify-content: center; align-items: stretch; min-height: 80vh;">
-    <!-- Left image column -->
-    <aside style="flex: 1; text-align: center;">
-      <img src="{{ url_for('static', filename='left.png') }}" alt="Decorative left" style="max-width: 100%; height: 100%;">
-    </aside>
+  <section class="card section-pad">
+    <div class="grid grid-3" style="min-height: 60vh;">
+      <!-- Left image column (existing decorative) -->
+      <aside style="display:flex; align-items:center; justify-content:center;">
+        <img src="{{ url_for('static', filename='left.png') }}" alt="" style="max-width:100%; max-height:100%; object-fit:cover;">
+      </aside>
 
-    <!-- Center content -->
-    <div style="flex: 2; text-align: center; padding: 2rem;">
-      <h2>Welcome to {{ app_title }}</h2>
-      <p>
-        RideReady is here to help beginners explore motorcycles and essential gear.
-        We’ll ask you a few quick questions and return tailored, beginner-friendly
-        recommendations with links to official manufacturers and trusted retailers.
-      </p>
+      <!-- Center content -->
+      <div style="padding: 1rem 1.25rem; display:flex; flex-direction:column; justify-content:center; text-align:center;">
+        <h2 class="title">Welcome to {{ app_title }}</h2>
+        <p class="subtitle" style="margin-bottom: 1rem;">
+          Beginner-friendly motorcycle & gear guidance with verified sources.
+        </p>
 
-      <form action="{{ url_for('disclaimer') }}" method="get" style="margin-top: 2rem;">
-        <button type="submit">Start</button>
-      </form>
+        <ul style="list-style:none; padding:0; margin:0 0 1.25rem 0; color: var(--text); line-height:1.6;">
+          <li>• Filtered against a curated beginner whitelist</li>
+          <li>• Clear explanations and key specs</li>
+          <li>• Links to official manufacturers and trusted retailers</li>
+        </ul>
+
+        <form action="{{ url_for('disclaimer') }}" method="get" style="margin-top:.5rem;">
+          <button class="btn btn-primary" type="submit" aria-label="Start advisor">Start</button>
+        </form>
+      </div>
+
+      <!-- Right image column (existing decorative) -->
+      <aside style="display:flex; align-items:center; justify-content:center;">
+        <img src="{{ url_for('static', filename='right.png') }}" alt="" style="max-width:100%; max-height:100%; object-fit:cover;">
+      </aside>
     </div>
+  </section>
 
-    <!-- Right image column -->
-    <aside style="flex: 1; text-align: center;">
-      <img src="{{ url_for('static', filename='right.png') }}" alt="Decorative right" style="max-width: 100%; height: 100%;">
-    </aside>
+  <!-- Stock image row -->
+  <section style="margin-top: 1.25rem;">
+    <div class="grid grid-2">
+      <figure class="card" style="overflow:hidden;">
+        <img src="{{ url_for('static', filename='motorcyle_ride.jpg') }}"
+             alt="Rider taking a scenic corner"
+             style="width:100%; height:300px; object-fit:cover; display:block;">
+        <figcaption class="section-pad" style="font-weight:600;">Ride with Confidence</figcaption>
+      </figure>
+
+      <figure class="card" style="overflow:hidden;">
+        <img src="{{ url_for('static', filename='gear_stock.jpg') }}"
+             alt="Helmet, gloves, and jacket on a desk"
+             style="width:100%; height:300px; object-fit:cover; display:block;">
+        <figcaption class="section-pad" style="font-weight:600;">Gear Up Safely</figcaption>
+      </figure>
+    </div>
   </section>
 {% endblock %}
