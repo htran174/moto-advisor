@@ -1,16 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
-  <section style="max-width: 600px; text-align: center;">
-    <h2>Disclaimer</h2>
-    <p>
-      We don’t store your data. Inputs are processed in memory and discarded.
-      We don’t own or endorse products. External links are for convenience only.
-      Specs shown may be AI-reported. Always verify on manufacturer websites.
-      Riding motorcycles involves risks. Wear proper gear and follow local laws.
-    </p>
-
-    <form action="{{ url_for('advisor') }}" method="get" style="margin-top: 2rem;">
-      <button type="submit">I Understand</button>
+  <section class="card section-pad" style="max-width: 820px; margin: 0 auto; text-align: left;">
+    <h2 class="title">Disclaimer</h2>
+    <ul style="line-height:1.8;">
+      <li><strong>Privacy:</strong> We do not store your inputs. They are processed in memory and discarded.</li>
+      <li><strong>Sources:</strong> Specs may be AI-generated. Always verify on official manufacturer websites.</li>
+      <li><strong>Independence:</strong> External links are provided for convenience; we don’t endorse products.</li>
+      <li><strong>Safety:</strong> Motorcycling involves risk. Wear proper gear and follow local laws.</li>
+    </ul>
+    <form action="{{ url_for('advisor') }}" method="get" style="margin-top: 1rem;">
+      <button type="submit" class="btn btn-primary">I Understand</button>
     </form>
   </section>
 {% endblock %}
