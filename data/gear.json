@@ -1,0 +1,38 @@
+[
+  {
+    "id": "hjc_c10_ece",
+    "type": "helmet",
+    "name": "HJC C10",
+    "certs": ["ECE 22.06"],
+    "fit_notes": "Intermediate oval",
+    "budget_tier": "low",
+    "beginner_score": 85,
+    "official_url": "https://hjchelmets.com/products/c10",
+    "mfr_domain": "hjchelmets.com",
+    "tags": ["full-face", "value"]
+  },
+  {
+    "id": "alpinestars_sp2_gloves",
+    "type": "gloves",
+    "name": "Alpinestars SP-2 V3",
+    "certs": ["CE Level 1 KP"],
+    "fit_notes": "Sport fit",
+    "budget_tier": "mid",
+    "beginner_score": 80,
+    "official_url": "https://www.alpinestars.com/",
+    "mfr_domain": "alpinestars.com",
+    "tags": ["knuckle protection", "street"]
+  },
+  {
+    "id": "revit_jacket_stealth2",
+    "type": "jacket",
+    "name": "REV’IT! Stealth 2",
+    "certs": ["CE AA"],
+    "fit_notes": "Slim urban",
+    "budget_tier": "mid",
+    "beginner_score": 78,
+    "official_url": "https://www.revitsport.com/",
+    "mfr_domain": "revitsport.com",
+    "tags": ["armored", "commute"]
+  }
+]
