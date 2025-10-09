@@ -1,0 +1,383 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" style="width:100%; max-width:1200px; overflow:hidden;">
+  <!-- Header with horizontal tabs -->
+  <div class="section-pad" style="background: linear-gradient(180deg, #F3F4F6, #FFFFFF); border-bottom:1px solid var(--border);">
+    <div style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
+      <h2 class="title" style="margin-right:auto;">Your Recommendations</h2>
+      <nav aria-label="Tabs" class="tabs" style="display:flex; gap:.25rem; background:var(--surface); border:1px solid var(--border); border-radius:999px; padding:.25rem;">
+        <button id="tabRecs" class="tab active" type="button" aria-selected="true"
+                style="border:none; background:var(--primary); color:#fff; padding:.5rem 1rem; border-radius:999px; font-weight:600;">
+          Recommendations
+        </button>
+        <button id="tabChat" class="tab" type="button" aria-selected="false"
+                style="border:none; background:transparent; color:var(--text); padding:.5rem 1rem; border-radius:999px; font-weight:600;">
+          Chat
+        </button>
+      </nav>
+    </div>
+    <p id="meta" class="subtitle" style="margin:.25rem 0 0;">Loading…</p>
+  </div>
+
+  <!-- Body: two tab panels -->
+  <div class="section-pad" style="padding-top:1rem;">
+    <!-- Panel: Recommendations (timeline with latest-first & global de-dup) -->
+    <div id="panelRecs">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:.5rem; margin-bottom:.75rem;">
+        <div class="subtitle" id="profileSummary"></div>
+        <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
+          <a href="{{ url_for('advisor') }}" class="btn btn-outline" style="text-decoration:none;">Edit inputs</a>
+          <button id="btnReRun" class="btn btn-primary" type="button">Re-run</button>
+          <button id="btnClearHistory" class="btn btn-outline" type="button">Clear history</button>
+        </div>
+      </div>
+
+      <!-- Visible, de-duplicated list -->
+      <div id="visibleList" class="grid" style="gap:1rem;"></div>
+
+      <!-- Full timeline (expandable) -->
+      <details style="margin-top:1rem;">
+        <summary class="subtitle">Show full timeline snapshots</summary>
+        <div id="timeline" class="grid" style="gap:1rem; margin-top:.75rem;"></div>
+      </details>
+    </div>
+
+    <!-- Panel: Chat -->
+    <div id="panelChat" hidden>
+      <div class="card" style="border:1px solid var(--border); overflow:hidden;">
+        <div class="section-pad" style="background: linear-gradient(180deg, #F3F4F6, #FFFFFF); border-bottom:1px solid var(--border);">
+          <p class="subtitle" style="margin:0;">Talk to RideReady (prototype). Use natural language later; for now: <code>/set height=175 budget=7000 abs=0</code>, <code>/rec</code>.</p>
+        </div>
+
+        <div id="chatBody" style="padding: 1rem; height: 340px; overflow:auto; background: var(--surface-2);">
+          <div class="bubble bot">
+            <p>Hi! I can adjust your profile and refresh suggestions. Try <code>/set budget=7000</code> then <code>/rec</code>.</p>
+            <time></time>
+          </div>
+        </div>
+
+        <form id="chatForm" class="section-pad" style="display:flex; gap:.5rem; border-top:1px solid var(--border); background: var(--surface);">
+          <label for="chatInput" class="sr-only">Enter your message</label>
+          <input id="chatInput" type="text" placeholder="Type /set … or /rec"
+                 style="flex:1; padding:.85rem 1rem; border:1px solid var(--border); border-radius: 999px; background:#fff;">
+          <button class="btn btn-primary" type="submit">Send</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  @media (min-width: 980px){
+    #visibleList{ grid-template-columns: repeat(2, minmax(0, 1fr)); display:grid; }
+    #timeline{ grid-template-columns: repeat(2, minmax(0, 1fr)); display:grid; }
+  }
+  .bubble{
+    max-width: 76%;
+    padding: .75rem 1rem;
+    margin: .35rem 0;
+    border-radius: 18px;
+    line-height: 1.45;
+    box-shadow: 0 2px 10px rgba(0,0,0,.05);
+    word-wrap: break-word;
+  }
+  .bubble time{ display:block; font-size:.75rem; color: var(--muted); margin-top:.35rem; }
+  .bubble.user{ margin-left:auto; background: linear-gradient(90deg, var(--primary), var(--primary-600)); color:#fff; border-bottom-right-radius:6px; }
+  .bubble.bot{ background:#fff; border:1px solid var(--border); color:var(--text); border-bottom-left-radius:6px; }
+  .skeleton{
+    border:1px solid var(--border); border-radius: var(--radius); overflow:hidden;
+    background: linear-gradient(90deg, #eee, #f7f7f7, #eee); background-size:200% 100%; animation: shimmer 1.4s infinite; height: 220px;
+  }
+  @keyframes shimmer{ 0%{background-position:200% 0;} 100%{background-position:-200% 0;} }
+</style>
+
+<script>
+(function(){
+  // --------- State (session) ---------
+  let profile = readJSON('rr.profile') || {experience:'new',height_cm:170,budget_usd:6000,riding_style:[],must_have:['abs'],k:3};
+  let history = readJSON('rr.history') || []; // array of snapshots {id, created_at, profile_used, items[]}
+
+  // --------- DOM refs ---------
+  const meta = document.getElementById('meta');
+  const profileSummary = document.getElementById('profileSummary');
+  const btnReRun = document.getElementById('btnReRun');
+  const btnClearHistory = document.getElementById('btnClearHistory');
+
+  const tabRecs = document.getElementById('tabRecs');
+  const tabChat = document.getElementById('tabChat');
+  const panelRecs = document.getElementById('panelRecs');
+  const panelChat = document.getElementById('panelChat');
+
+  const visibleList = document.getElementById('visibleList');
+  const timeline = document.getElementById('timeline');
+
+  const chatBody = document.getElementById('chatBody');
+  const chatForm = document.getElementById('chatForm');
+  const chatInput = document.getElementById('chatInput');
+
+  // --------- Tabs behavior ---------
+  tabRecs.addEventListener('click', () => switchTab('recs'));
+  tabChat.addEventListener('click', () => switchTab('chat'));
+  function switchTab(which){
+    const recs = which === 'recs';
+    panelRecs.hidden = !recs;
+    panelChat.hidden = recs;
+    tabRecs.classList.toggle('active', recs);
+    tabChat.classList.toggle('active', !recs);
+    tabRecs.style.background = recs ? 'var(--primary)' : 'transparent';
+    tabRecs.style.color = recs ? '#fff' : 'var(--text)';
+    tabChat.style.background = !recs ? 'var(--primary)' : 'transparent';
+    tabChat.style.color = !recs ? '#fff' : 'var(--text)';
+  }
+
+  // --------- Utilities ---------
+  function readJSON(k){ try{ return JSON.parse(sessionStorage.getItem(k) || ''); }catch{ return null; } }
+  function writeJSON(k,v){ sessionStorage.setItem(k, JSON.stringify(v)); }
+  function ts(){ return new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+  function nowISO(){ return new Date().toISOString(); }
+  function esc(s){ return (s||'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])); }
+  function clamp(n,min,max){ return Math.max(min, Math.min(max, n||min)); }
+  function summarize(p){ return `H:${p.height_cm}cm • Budget:$${p.budget_usd} • ${p.experience==='new'?'New':'Returning'} • ABS:${p.must_have.includes('abs')?'Yes':'No'} • k=${p.k}`; }
+
+  // --------- Rendering ---------
+  function setSkeletons(n){
+    visibleList.innerHTML = '';
+    for(let i=0;i<n;i++){ const sk=document.createElement('div'); sk.className='skeleton'; visibleList.appendChild(sk); }
+  }
+
+  function card(item){
+    const div = document.createElement('div');
+    div.className = 'card';
+    div.style.overflow = 'hidden';
+    div.style.border = '1px solid var(--border)';
+    div.innerHTML = `
+      <div style="height:160px; background:#f5f5f5;">
+        <img src="${esc(item.image_url || '/static/motorcyle_ride.jpg')}" alt="${esc(item.name)}"
+             style="width:100%; height:160px; object-fit:cover; display:block;">
+      </div>
+      <div class="section-pad" style="display:grid; gap:.35rem;">
+        <div style="display:flex; align-items:baseline; justify-content:space-between;">
+          <strong>${esc(item.name)}</strong>
+          <span class="subtitle">Score: ${item.score?.toFixed ? item.score.toFixed(1) : item.score}</span>
+        </div>
+        <div class="subtitle">${esc(item.manufacturer)} • ${esc(item.category)}</div>
+        <div style="font-size:.95rem;">
+          <span>CC: ${item.engine_cc}</span> •
+          <span>Seat: ${item.seat_height_mm}mm</span> •
+          <span>Weight: ${item.wet_weight_kg}kg</span> •
+          <span>ABS: ${item.abs ? 'Yes' : 'No'}</span>
+        </div>
+        <ul style="margin:.25rem 0 0 1rem; padding:0; font-size:.95rem;">
+          ${(item.reasons||[]).slice(0,3).map(r=>`<li>${esc(r)}</li>`).join('')}
+        </ul>
+        <div>
+          <a href="${item.official_url}" target="_blank" rel="noopener"
+             class="btn btn-outline" style="display:inline-block; text-decoration:none; margin-top:.25rem;">Official Site</a>
+        </div>
+      </div>
+    `;
+    return div;
+  }
+
+  function renderVisibleFromHistory(){
+    // Newest → oldest; keep only the first time we see a bike id
+    const seen = new Set();
+    const visible = [];
+    const flat = [];
+    const sorted = [...history].sort((a,b)=> (a.created_at < b.created_at ? 1 : -1));
+    sorted.forEach(snap => {
+      snap.items.forEach(it => flat.push({snap, it}));
+    });
+    flat.forEach(({it})=>{
+      const key = it.id || it.bike_id || it.name;
+      if(!seen.has(key)){
+        seen.add(key);
+        visible.push(it);
+      }
+    });
+
+    visibleList.innerHTML = '';
+    if(visible.length === 0){
+      const p = document.createElement('p');
+      p.className = 'subtitle';
+      p.textContent = 'No saved recommendations yet. Click Re-run or use the Chat tab.';
+      visibleList.appendChild(p);
+      return;
+    }
+    visible.forEach(it => visibleList.appendChild(card(it)));
+  }
+
+  function renderTimeline(){
+    timeline.innerHTML = '';
+    const sorted = [...history].sort((a,b)=> (a.created_at < b.created_at ? 1 : -1));
+    sorted.forEach(snap => {
+      const wrap = document.createElement('div');
+      wrap.className = 'card';
+      wrap.style.border = '1px solid var(--border)';
+      const date = new Date(snap.created_at).toLocaleString();
+      wrap.innerHTML = `
+        <div class="section-pad" style="border-bottom:1px solid var(--border); background:linear-gradient(180deg,#F3F4F6,#FFFFFF);">
+          <strong>Snapshot • ${date}</strong>
+          <div class="subtitle">${esc(summarize(snap.profile_used))}</div>
+        </div>
+        <div class="section-pad" style="display:grid; gap:1rem;"></div>
+      `;
+      const grid = wrap.lastElementChild;
+      snap.items.forEach(it => grid.appendChild(card(it)));
+      timeline.appendChild(wrap);
+    });
+  }
+
+  function updateMeta(){
+    profileSummary.textContent = summarize(profile);
+    meta.textContent = `History: ${history.length} snapshot(s) • Latest-first view (de-duplicated)`;
+  }
+
+  // --------- API calls ---------
+  async function callRecommend(){
+    setSkeletons(profile.k || 3);
+    const res = await fetch('/api/recommend', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(profile)
+    });
+    if(!res.ok){
+      visibleList.innerHTML = '<p class="subtitle">Error fetching recommendations.</p>';
+      return [];
+    }
+    const data = await res.json();
+    return data.items || [];
+  }
+
+  async function chooseImage(item){
+    // Future: if backend returns item.local_image, prefer it. For now, ask /api/images (1 image).
+    try{
+      const r = await fetch('/api/images', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ query: `${item.manufacturer} ${item.name}`, limit:1, mfr_domain: item.mfr_domain })
+      });
+      const j = await r.json();
+      return (j.images && j.images[0] && j.images[0].url) || '/static/motorcyle_ride.jpg';
+    }catch{
+      return '/static/motorcyle_ride.jpg';
+    }
+  }
+
+  async function createSnapshotFrom(items){
+    // Attach a single image per item and keep lightweight fields only
+    const enriched = [];
+    for(const it of items){
+      const image_url = await chooseImage(it);
+      enriched.push({
+        id: it.id || it.name,
+        name: it.name,
+        manufacturer: it.manufacturer,
+        category: it.category,
+        engine_cc: it.engine_cc,
+        seat_height_mm: it.seat_height_mm,
+        wet_weight_kg: it.wet_weight_kg,
+        abs: it.abs,
+        score: it.score,
+        reasons: it.reasons || [],
+        official_url: it.official_url,
+        mfr_domain: it.mfr_domain,
+        image_url
+      });
+    }
+    const snap = {
+      id: 'rr-run-' + Date.now(),
+      created_at: nowISO(),
+      profile_used: {...profile},
+      items: enriched
+    };
+    return snap;
+  }
+
+  async function runAndSave(){
+    const items = await callRecommend();
+    const snap = await createSnapshotFrom(items);
+    history.unshift(snap);                    // newest-first
+    history = history.slice(0, 10);          // cap to 10 snapshots to avoid bloat
+    writeJSON('rr.history', history);
+    renderVisibleFromHistory();
+    renderTimeline();
+    updateMeta();
+  }
+
+  // --------- Chat commands (phase 1; OpenAI-ready later) ---------
+  chatForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = (chatInput.value || '').trim();
+    if(!text) return;
+    addBubble(text, 'user');
+    chatInput.value = '';
+
+    if(text.startsWith('/set')){
+      const changed = applySet(text);
+      writeJSON('rr.profile', profile);
+      addBubble(changed.length ? ('Updated: ' + changed.join(', ')) : 'No changes detected.', 'bot');
+    } else if(text.startsWith('/rec')){
+      addBubble('Re-running recommendations…', 'bot');
+      await runAndSave();
+      addBubble('Done. New snapshot added at the top.', 'bot');
+      switchTab('recs');
+    } else {
+      // Placeholder until OpenAI chat is enabled
+      addBubble('Prototype chat: use /set height=175 budget=7000 abs=0 and /rec. Natural language will be enabled with OpenAI.', 'bot');
+    }
+  });
+
+  function applySet(cmd){
+    // /set height=175 budget=7000 exp=returning abs=0 k=3
+    const parts = cmd.split(/\s+/).slice(1);
+    const changed = [];
+    parts.forEach(p=>{
+      const [k,vRaw] = p.split('=');
+      if(!k) return;
+      const v = (vRaw||'').toLowerCase();
+      if(['height','height_cm'].includes(k)){ profile.height_cm = clamp(parseInt(v||'170',10),140,210); changed.push(`height=${profile.height_cm}`); }
+      else if(['budget','budget_usd'].includes(k)){ profile.budget_usd = clamp(parseInt(v||'6000',10),1000,20000); changed.push(`budget=$${profile.budget_usd}`); }
+      else if(['exp','experience'].includes(k)){ profile.experience = (v==='returning'?'returning':'new'); changed.push(`experience=${profile.experience}`); }
+      else if(k==='abs'){ const on = (v==='1'||v==='true'||v==='yes'); profile.must_have = on ? ['abs'] : []; changed.push(`abs=${on?'on':'off'}`); }
+      else if(k==='k'){ profile.k = clamp(parseInt(v||'3',10),1,6); changed.push(`k=${profile.k}`); }
+    });
+    return changed;
+  }
+
+  function addBubble(text, who){
+    const div = document.createElement('div');
+    div.className = 'bubble ' + (who === 'user' ? 'user' : 'bot');
+    div.innerHTML = `<p>${esc(text)}</p><time>${ts()}</time>`;
+    chatBody.appendChild(div);
+    chatBody.scrollTop = chatBody.scrollHeight;
+  }
+
+  // --------- Buttons ---------
+  btnReRun.addEventListener('click', async ()=>{
+    await runAndSave();
+  });
+  btnClearHistory.addEventListener('click', ()=>{
+    history = [];
+    writeJSON('rr.history', history);
+    renderVisibleFromHistory();
+    renderTimeline();
+    updateMeta();
+  });
+
+  // --------- Init ---------
+  (async function init(){
+    writeJSON('rr.profile', profile); // ensure present
+    updateMeta();
+    // If no history yet, run once on entry
+    if(history.length === 0){
+      await runAndSave();
+    }else{
+      renderVisibleFromHistory();
+      renderTimeline();
+    }
+    // default tab
+    switchTab('recs');
+  })();
+})();
+</script>
+{% endblock %}
