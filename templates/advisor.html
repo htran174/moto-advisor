@@ -1,111 +1,84 @@
 {% extends "base.html" %}
 {% block content %}
-  <section class="card" style="width:100%; max-width: 900px; overflow:hidden;">
-    <!-- Chat header -->
-    <div class="section-pad" style="background: linear-gradient(180deg, #F3F4F6, #FFFFFF); border-bottom: 1px solid var(--border);">
-      <h2 class="title" style="display:flex; align-items:center; gap:.5rem;">
-        <span class="title">RideReady Assistant</span>
-        <span style="margin-left:auto; font-size:.95rem; color:var(--muted);">We’re online</span>
-      </h2>
-      <p class="subtitle">Ask anything about beginner bikes or gear. (Prototype — no data saved.)</p>
-    </div>
+<section class="card" style="width:100%; max-width: 960px; overflow: hidden;">
+  <!-- Header -->
+  <div class="section-pad" style="background: linear-gradient(180deg, #F3F4F6, #FFFFFF); border-bottom:1px solid var(--border);">
+    <h2 class="title" style="display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;">
+      <span>RideReady Advisor</span>
+      <span class="subtitle" style="margin-left:auto;">No data saved • Local prototype</span>
+    </h2>
+  </div>
 
-    <!-- Chat body -->
-    <div id="chatBody" style="padding: 1rem; height: 460px; overflow:auto; background: var(--surface-2);">
-      <!-- Initial system message -->
-      <div class="bubble bot">
-        <p>Hello 👋 What would you like help with today?</p>
-        <time></time>
+  <!-- Inputs -->
+  <div class="section-pad" style="display:grid; gap:1rem;">
+    <form id="inputsForm" style="display:grid; gap:1rem;">
+      <div style="display:grid; gap:.5rem;">
+        <label for="experience" style="font-weight:600;">Experience</label>
+        <select id="experience" name="experience" style="padding:.7rem; border:1px solid var(--border); border-radius:10px;">
+          <option value="new" selected>New rider</option>
+          <option value="returning">Returning rider</option>
+        </select>
       </div>
-    </div>
 
-    <!-- Composer -->
-    <form id="chatForm" class="section-pad" style="display:flex; gap:.5rem; border-top:1px solid var(--border); background: var(--surface);">
-      <label for="chatInput" class="sr-only">Enter your message</label>
-      <input id="chatInput" name="message" type="text" autocomplete="off" placeholder="Enter your message..."
-             style="flex:1; padding:.85rem 1rem; border:1px solid var(--border); border-radius: 999px; background:#fff;">
-      <button class="btn btn-primary" type="submit" aria-label="Send message">Send</button>
+      <div style="display:grid; gap:.5rem;">
+        <label for="height_cm" style="font-weight:600;">Height (cm)</label>
+        <input id="height_cm" name="height_cm" type="number" min="140" max="210" value="170"
+               style="padding:.7rem; border:1px solid var(--border); border-radius:10px;">
+      </div>
+
+      <div style="display:grid; gap:.5rem;">
+        <label for="budget_usd" style="font-weight:600;">Budget (USD)</label>
+        <input id="budget_usd" name="budget_usd" type="number" min="1000" max="20000" step="100" value="6000"
+               style="padding:.7rem; border:1px solid var(--border); border-radius:10px;">
+      </div>
+
+      <div style="display:flex; align-items:center; gap:.5rem;">
+        <input id="abs_toggle" type="checkbox" checked>
+        <label for="abs_toggle">Require ABS</label>
+      </div>
+
+      <div style="display:grid; gap:.5rem;">
+        <label for="k" style="font-weight:600;">How many results? (1–6)</label>
+        <input id="k" name="k" type="number" min="1" max="6" value="3"
+               style="padding:.7rem; border:1px solid var(--border); border-radius:10px;">
+      </div>
+
+      <div style="display:flex; gap:.75rem; align-items:center; flex-wrap:wrap;">
+        <button id="btnGet" class="btn btn-primary" type="button">Get Recommendations</button>
+        <a href="{{ url_for('disclaimer') }}" class="btn btn-outline" style="text-decoration:none;">View Disclaimer</a>
+      </div>
+      <p class="subtitle" style="margin: .25rem 0 0;">We’ll save your inputs locally and take you to the Recommendations page.</p>
     </form>
-  </section>
+  </div>
+</section>
 
-  <style>
-    .bubble{
-      max-width: 76%;
-      padding: .75rem 1rem;
-      margin: .35rem 0;
-      border-radius: 18px;
-      line-height: 1.45;
-      box-shadow: 0 2px 10px rgba(0,0,0,.05);
-      word-wrap: break-word;
+<script>
+(function(){
+  const experience = document.getElementById('experience');
+  const height_cm  = document.getElementById('height_cm');
+  const budget_usd = document.getElementById('budget_usd');
+  const abs_toggle = document.getElementById('abs_toggle');
+  const kEl        = document.getElementById('k');
+  const btnGet     = document.getElementById('btnGet');
+
+  btnGet.addEventListener('click', () => {
+    const profile = {
+      experience: experience.value,
+      height_cm: clamp(parseInt(height_cm.value || '170',10), 140, 210),
+      budget_usd: clamp(parseInt(budget_usd.value || '6000',10), 1000, 20000),
+      riding_style: [],
+      must_have: abs_toggle.checked ? ['abs'] : [],
+      k: clamp(parseInt(kEl.value || '3',10), 1, 6)
+    };
+    sessionStorage.setItem('rr.profile', JSON.stringify(profile));
+    // Start a fresh recommendations history for this session if not present
+    if(!sessionStorage.getItem('rr.history')){
+      sessionStorage.setItem('rr.history', JSON.stringify([]));
     }
-    .bubble time{
-      display:block;
-      font-size: .75rem;
-      color: var(--muted);
-      margin-top: .35rem;
-    }
-    .bubble.user{
-      margin-left: auto;
-      background: linear-gradient(90deg, var(--primary), var(--primary-600));
-      color: #fff;
-      border-bottom-right-radius: 6px;
-    }
-    .bubble.bot{
-      background: #ffffff;
-      border: 1px solid var(--border);
-      color: var(--text);
-      border-bottom-left-radius: 6px;
-    }
-    .sr-only{
-      position:absolute;
-      width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;
-    }
-  </style>
+    window.location.href = "{{ url_for('recommendations') }}";
+  });
 
-  <script>
-    (function(){
-      const chatBody = document.getElementById('chatBody');
-      const form = document.getElementById('chatForm');
-      const input = document.getElementById('chatInput');
-
-      function ts(){
-        const d = new Date();
-        return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-      }
-
-      function scrollToBottom(){
-        chatBody.scrollTop = chatBody.scrollHeight;
-      }
-
-      function addBubble(text, who){
-        const div = document.createElement('div');
-        div.className = 'bubble ' + (who === 'user' ? 'user' : 'bot');
-        div.innerHTML = `<p>${escapeHtml(text)}</p><time>${ts()}</time>`;
-        chatBody.appendChild(div);
-        scrollToBottom();
-      }
-
-      function escapeHtml(str){
-        return str.replace(/[&<>"']/g, function(m){
-          return ({
-            '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
-          })[m];
-        });
-      }
-
-      form.addEventListener('submit', function(e){
-        e.preventDefault();
-        const text = (input.value || '').trim();
-        if(!text) return;
-        addBubble(text, 'user');
-        input.value = '';
-
-        // Prototype bot reply (pure frontend)
-        setTimeout(function(){
-          const reply = "Thanks! This is a prototype chat. Backend AI coming soon.";
-          addBubble(reply, 'bot');
-        }, 450);
-      });
-    })();
-  </script>
+  function clamp(n, min, max){ return Math.max(min, Math.min(max, n||min)); }
+})();
+</script>
 {% endblock %}
