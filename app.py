@@ -129,6 +129,12 @@ def api_recommend():
         "count": len(result),
         "items": result
     })
+# ------------ API: recommendations ------------
+@app.route("/recommendations")
+def recommendations():
+    # page reads profile from sessionStorage via JS
+    return render_template("recommendations.html", page_title="Recommendations")
+
 
 # ------------ API: images ------------
 @app.route("/api/images", methods=["POST"])
@@ -150,7 +156,6 @@ def api_images():
         return ok(res)
     except Exception as e:
         return fail(f"Image search failed: {e}", "IMAGE_SEARCH_FAILED", 502)
-
 # ------------ main ------------
 if __name__ == "__main__":
     app.run(debug=True)
