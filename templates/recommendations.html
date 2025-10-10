@@ -19,9 +19,9 @@
     <p id="meta" class="subtitle" style="margin:.25rem 0 0;">Loading…</p>
   </div>
 
-  <!-- Body: two tab panels -->
+  <!-- Content -->
   <div class="section-pad" style="padding-top:1rem;">
-    <!-- Panel: Recommendations (timeline with latest-first & global de-dup) -->
+    <!-- Panel: Recommendations -->
     <div id="panelRecs">
       <div style="display:flex; align-items:center; justify-content:space-between; gap:.5rem; margin-bottom:.75rem;">
         <div class="subtitle" id="profileSummary"></div>
@@ -46,12 +46,12 @@
     <div id="panelChat" hidden>
       <div class="card" style="border:1px solid var(--border); overflow:hidden;">
         <div class="section-pad" style="background: linear-gradient(180deg, #F3F4F6, #FFFFFF); border-bottom:1px solid var(--border);">
-          <p class="subtitle" style="margin:0;">Talk to RideReady (prototype). Use natural language later; for now: <code>/set height=175 budget=7000 abs=0</code>, <code>/rec</code>.</p>
+          <p class="subtitle" style="margin:0;">Prototype chat<code>height: 175cm budget: 7000 types: naked, sportbike</code></p>
         </div>
 
         <div id="chatBody" style="padding: 1rem; height: 340px; overflow:auto; background: var(--surface-2);">
           <div class="bubble bot">
-            <p>Hi! I can adjust your profile and refresh suggestions. Try <code>/set budget=7000</code> then <code>/rec</code>.</p>
+            <p>Hi! I can adjust your profile and refresh suggestions. <code> You can go back to see the recommendation by the recommendation tab</code>.</p>
             <time></time>
           </div>
         </div>
@@ -66,6 +66,38 @@
     </div>
   </div>
 </section>
+
+<!-- Modals -->
+<div id="modalBackdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:1000;"></div>
+
+<!-- ABS modal -->
+<div id="absModal" class="card" style="display:none; position:fixed; z-index:1001; left:50%; top:20%; transform:translateX(-50%); width:min(520px, 92vw); border:1px solid var(--border);">
+  <div class="section-pad" style="border-bottom:1px solid var(--border); background:linear-gradient(180deg,#F3F4F6,#FFFFFF);">
+    <strong>Safety notice</strong>
+  </div>
+  <div class="section-pad" style="line-height:1.7;">
+    Some recommended bikes in this list do <strong>not</strong> include ABS. ABS can reduce crash risk in emergency braking.
+    Consider choosing a trim with ABS if available.
+  </div>
+  <div class="section-pad" style="display:flex; gap:.5rem; justify-content:flex-end; border-top:1px solid var(--border);">
+    <button id="absOk" class="btn btn-primary" type="button">OK</button>
+  </div>
+</div>
+
+<!-- MSRP modal (shown on first click to an Official link) -->
+<div id="msrpModal" class="card" style="display:none; position:fixed; z-index:1001; left:50%; top:20%; transform:translateX(-50%); width:min(560px, 92vw); border:1px solid var(--border);">
+  <div class="section-pad" style="border-bottom:1px solid var(--border); background:linear-gradient(180deg,#F3F4F6,#FFFFFF);">
+    <strong>Heads-up on pricing</strong>
+  </div>
+  <div class="section-pad" style="line-height:1.7;">
+    Prices shown on manufacturer sites are typically <strong>MSRP</strong>. For a first bike, many riders choose
+    <strong>second-hand</strong> to save money since beginners often upgrade quickly or decide riding isn’t for them.
+  </div>
+  <div class="section-pad" style="display:flex; gap:.5rem; justify-content:flex-end; border-top:1px solid var(--border);">
+    <button id="msrpCancel" class="btn btn-outline" type="button">Cancel</button>
+    <button id="msrpProceed" class="btn btn-primary" type="button">Continue to site</button>
+  </div>
+</div>
 
 <style>
   @media (min-width: 980px){
@@ -89,13 +121,28 @@
     background: linear-gradient(90deg, #eee, #f7f7f7, #eee); background-size:200% 100%; animation: shimmer 1.4s infinite; height: 220px;
   }
   @keyframes shimmer{ 0%{background-position:200% 0;} 100%{background-position:-200% 0;} }
+  .chip{ display:inline-block; font-size:.8rem; padding:.15rem .5rem; border-radius:999px; border:1px solid var(--border); background:#fff; }
+  .chip.warn{ border-color:#f59e0b; background:#fff7ed; }
 </style>
 
 <script>
 (function(){
   // --------- State (session) ---------
-  let profile = readJSON('rr.profile') || {experience:'new',height_cm:170,budget_usd:6000,riding_style:[],must_have:['abs'],k:3};
+  let profile = readJSON('rr.profile') || {experience:'no_experience',height_cm:170,budget_usd:6000,bike_types:[],riding_style:[],k:3};
   let history = readJSON('rr.history') || []; // array of snapshots {id, created_at, profile_used, items[]}
+  let hasRunOnce = history.length > 0;
+
+  // Common style sets (IDs you keep in your whitelist)
+  const STYLE_COMMON = {
+    sportbike: ["yamaha_r3","honda_cbr300r","kawasaki_ninja_400","suzuki_gsxr250"],
+    naked:     ["yamaha_mt03","kawasaki_z400","ktm_390_duke","honda_cb300r"],
+    cruiser:   ["honda_rebel_300","kawasaki_vulcan_s"],
+    standard:  ["honda_cb300r","kawasaki_z400","yamaha_mt03"],
+    adventure: ["kawasaki_versys_x_300","honda_cb500x_light"],  // placeholder ids if present
+    touring:   ["kawasaki_versys_x_300"],                       // light-safe picks only
+    dual_sport:["honda_crf300l"]                                 // light-safe pick
+  };
+  const GLOBAL_COMMON = ["yamaha_r3","honda_cbr300r","kawasaki_ninja_400","honda_rebel_300","yamaha_mt03","kawasaki_z400","honda_cb300r"];
 
   // --------- DOM refs ---------
   const meta = document.getElementById('meta');
@@ -114,6 +161,12 @@
   const chatBody = document.getElementById('chatBody');
   const chatForm = document.getElementById('chatForm');
   const chatInput = document.getElementById('chatInput');
+
+  // Modals
+  const backdrop = document.getElementById('modalBackdrop');
+  const absModal = document.getElementById('absModal'); const absOk = document.getElementById('absOk');
+  const msrpModal = document.getElementById('msrpModal'); const msrpCancel = document.getElementById('msrpCancel'); const msrpProceed = document.getElementById('msrpProceed');
+  let pendingOfficialHref = null;
 
   // --------- Tabs behavior ---------
   tabRecs.addEventListener('click', () => switchTab('recs'));
@@ -137,12 +190,20 @@
   function nowISO(){ return new Date().toISOString(); }
   function esc(s){ return (s||'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])); }
   function clamp(n,min,max){ return Math.max(min, Math.min(max, n||min)); }
-  function summarize(p){ return `H:${p.height_cm}cm • Budget:$${p.budget_usd} • ${p.experience==='new'?'New':'Returning'} • ABS:${p.must_have.includes('abs')?'Yes':'No'} • k=${p.k}`; }
-
-  // --------- Rendering ---------
+  function summarize(p){
+    const t = (p.bike_types && p.bike_types.length) ? p.bike_types.join(', ') : 'any';
+    return `H:${p.height_cm}cm • Budget:$${p.budget_usd} • ${p.experience==='no_experience'?'No exp':'Little exp'} • Types:${t}`;
+  }
   function setSkeletons(n){
     visibleList.innerHTML = '';
     for(let i=0;i<n;i++){ const sk=document.createElement('div'); sk.className='skeleton'; visibleList.appendChild(sk); }
+  }
+
+  // --------- Rendering ---------
+  function perfLine(item){
+    const top = (item.max_speed_mph!=null && item.max_speed_mph!==undefined) ? item.max_speed_mph : '-';
+    const zero = (item.zero_to_sixty_s!=null && item.zero_to_sixty_s!==undefined) ? item.zero_to_sixty_s : '-';
+    return `Top speed — ${top} mph • 0–60 — ${zero} s`;
   }
 
   function card(item){
@@ -150,44 +211,50 @@
     div.className = 'card';
     div.style.overflow = 'hidden';
     div.style.border = '1px solid var(--border)';
+    // Official link click interceptor for MSRP popup
+    const officialLinkId = `off_${(item.id||item.name).replace(/[^a-z0-9_]/gi,'')}_${Math.random().toString(36).slice(2)}`;
     div.innerHTML = `
       <div style="height:160px; background:#f5f5f5;">
         <img src="${esc(item.image_url || '/static/motorcyle_ride.jpg')}" alt="${esc(item.name)}"
              style="width:100%; height:160px; object-fit:cover; display:block;">
       </div>
       <div class="section-pad" style="display:grid; gap:.35rem;">
-        <div style="display:flex; align-items:baseline; justify-content:space-between;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:.5rem;">
           <strong>${esc(item.name)}</strong>
-          <span class="subtitle">Score: ${item.score?.toFixed ? item.score.toFixed(1) : item.score}</span>
+          <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
+            ${item.abs === false ? '<span class="chip warn" title="This trim may not include ABS">No ABS</span>' : ''}
+          </div>
         </div>
         <div class="subtitle">${esc(item.manufacturer)} • ${esc(item.category)}</div>
-        <div style="font-size:.95rem;">
-          <span>CC: ${item.engine_cc}</span> •
-          <span>Seat: ${item.seat_height_mm}mm</span> •
-          <span>Weight: ${item.wet_weight_kg}kg</span> •
-          <span>ABS: ${item.abs ? 'Yes' : 'No'}</span>
-        </div>
+        <div style="font-size:.95rem;">${esc(perfLine(item))}</div>
         <ul style="margin:.25rem 0 0 1rem; padding:0; font-size:.95rem;">
           ${(item.reasons||[]).slice(0,3).map(r=>`<li>${esc(r)}</li>`).join('')}
         </ul>
         <div>
-          <a href="${item.official_url}" target="_blank" rel="noopener"
+          <a id="${officialLinkId}" href="${item.official_url}" target="_blank" rel="noopener"
              class="btn btn-outline" style="display:inline-block; text-decoration:none; margin-top:.25rem;">Official Site</a>
         </div>
       </div>
     `;
+    // Intercept official link for one-time MSRP popup
+    setTimeout(()=>{
+      const a = div.querySelector('#'+officialLinkId);
+      if(a) a.addEventListener('click', (e)=>{
+        if(sessionStorage.getItem('rr.msrpWarned') === '1') return; // allow
+        e.preventDefault();
+        pendingOfficialHref = a.href;
+        openMsrp();
+      });
+    },0);
     return div;
   }
 
   function renderVisibleFromHistory(){
-    // Newest → oldest; keep only the first time we see a bike id
     const seen = new Set();
     const visible = [];
     const flat = [];
     const sorted = [...history].sort((a,b)=> (a.created_at < b.created_at ? 1 : -1));
-    sorted.forEach(snap => {
-      snap.items.forEach(it => flat.push({snap, it}));
-    });
+    sorted.forEach(snap => snap.items.forEach(it => flat.push({snap, it})));
     flat.forEach(({it})=>{
       const key = it.id || it.bike_id || it.name;
       if(!seen.has(key)){
@@ -215,15 +282,20 @@
       wrap.className = 'card';
       wrap.style.border = '1px solid var(--border)';
       const date = new Date(snap.created_at).toLocaleString();
-      wrap.innerHTML = `
+      const inner = document.createElement('div');
+      inner.innerHTML = `
         <div class="section-pad" style="border-bottom:1px solid var(--border); background:linear-gradient(180deg,#F3F4F6,#FFFFFF);">
-          <strong>Snapshot • ${date}</strong>
+          <strong>Snapshot • ${esc(date)}</strong>
           <div class="subtitle">${esc(summarize(snap.profile_used))}</div>
         </div>
-        <div class="section-pad" style="display:grid; gap:1rem;"></div>
       `;
-      const grid = wrap.lastElementChild;
+      const grid = document.createElement('div');
+      grid.className = 'section-pad';
+      grid.style.display = 'grid';
+      grid.style.gap = '1rem';
       snap.items.forEach(it => grid.appendChild(card(it)));
+      wrap.appendChild(inner.firstElementChild);
+      wrap.appendChild(grid);
       timeline.appendChild(wrap);
     });
   }
@@ -249,7 +321,6 @@
   }
 
   async function chooseImage(item){
-    // Future: if backend returns item.local_image, prefer it. For now, ask /api/images (1 image).
     try{
       const r = await fetch('/api/images', {
         method:'POST',
@@ -264,7 +335,6 @@
   }
 
   async function createSnapshotFrom(items){
-    // Attach a single image per item and keep lightweight fields only
     const enriched = [];
     for(const it of items){
       const image_url = await chooseImage(it);
@@ -277,7 +347,9 @@
         seat_height_mm: it.seat_height_mm,
         wet_weight_kg: it.wet_weight_kg,
         abs: it.abs,
-        score: it.score,
+        // NEW: performance if present; otherwise undefined (renders as "-")
+        max_speed_mph: it.max_speed_mph,
+        zero_to_sixty_s: it.zero_to_sixty_s,
         reasons: it.reasons || [],
         official_url: it.official_url,
         mfr_domain: it.mfr_domain,
@@ -293,18 +365,56 @@
     return snap;
   }
 
+  // --------- Initial “style-first” shortlist preference (frontend) ---------
+  function preferStyleCommon(items){
+    // On very first snapshot of the session, bias to your curated style sets.
+    if (hasRunOnce) return items;
+    const types = (profile.bike_types||[]);
+    const desiredOrder = [];
+    if (types.length === 0){
+      desiredOrder.push(...GLOBAL_COMMON);
+    } else {
+      // merge sets in the given order
+      types.forEach(t=>{
+        const ids = STYLE_COMMON[t] || [];
+        ids.forEach(id=> desiredOrder.push(id));
+      });
+    }
+    if (desiredOrder.length === 0) return items;
+
+    const byId = new Map();
+    items.forEach(it => byId.set(it.id || it.name, it));
+
+    // Keep only those that appear in desiredOrder, preserving desired order; fill remainder if needed
+    const preferred = desiredOrder.map(id => byId.get(id)).filter(Boolean);
+    const remaining = items.filter(it => !desiredOrder.includes(it.id || it.name));
+    const k = clamp(profile.k || 3, 1, 6);
+    const result = preferred.slice(0, k);
+    if (result.length < k){
+      result.push(...remaining.slice(0, k - result.length));
+    }
+    return result;
+  }
+
   async function runAndSave(){
-    const items = await callRecommend();
-    const snap = await createSnapshotFrom(items);
+    const raw = await callRecommend();
+    const initial = preferStyleCommon(raw);
+    const snap = await createSnapshotFrom(initial);
     history.unshift(snap);                    // newest-first
-    history = history.slice(0, 10);          // cap to 10 snapshots to avoid bloat
+    history = history.slice(0, 10);          // cap snapshots
     writeJSON('rr.history', history);
     renderVisibleFromHistory();
     renderTimeline();
     updateMeta();
+    // One-time ABS popup if any item lacks ABS (first snapshot only)
+    if (!sessionStorage.getItem('rr.absWarned')) {
+      const hasNoAbs = (snap.items||[]).some(it => it.abs === false);
+      if (hasNoAbs) openAbs();
+    }
+    hasRunOnce = true;
   }
 
-  // --------- Chat commands (phase 1; OpenAI-ready later) ---------
+  // --------- Chat commands (prototype) ---------
   chatForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = (chatInput.value || '').trim();
@@ -322,13 +432,13 @@
       addBubble('Done. New snapshot added at the top.', 'bot');
       switchTab('recs');
     } else {
-      // Placeholder until OpenAI chat is enabled
-      addBubble('Prototype chat: use /set height=175 budget=7000 abs=0 and /rec. Natural language will be enabled with OpenAI.', 'bot');
+      // Placeholder until OpenAI natural language is enabled (with topic filter)
+      addBubble('Prototype chat: use /set height=175 budget=7000 types=naked and /rec. Natural language coming soon.', 'bot');
     }
   });
 
   function applySet(cmd){
-    // /set height=175 budget=7000 exp=returning abs=0 k=3
+    // /set height=175 budget=7000 exp=no_experience types=naked,sportbike k=3
     const parts = cmd.split(/\s+/).slice(1);
     const changed = [];
     parts.forEach(p=>{
@@ -337,8 +447,13 @@
       const v = (vRaw||'').toLowerCase();
       if(['height','height_cm'].includes(k)){ profile.height_cm = clamp(parseInt(v||'170',10),140,210); changed.push(`height=${profile.height_cm}`); }
       else if(['budget','budget_usd'].includes(k)){ profile.budget_usd = clamp(parseInt(v||'6000',10),1000,20000); changed.push(`budget=$${profile.budget_usd}`); }
-      else if(['exp','experience'].includes(k)){ profile.experience = (v==='returning'?'returning':'new'); changed.push(`experience=${profile.experience}`); }
-      else if(k==='abs'){ const on = (v==='1'||v==='true'||v==='yes'); profile.must_have = on ? ['abs'] : []; changed.push(`abs=${on?'on':'off'}`); }
+      else if(['exp','experience'].includes(k)){ profile.experience = (v==='little_experience'?'little_experience':'no_experience'); changed.push(`experience=${profile.experience}`); }
+      else if(k==='types'){
+        const arr = v.split(',').map(s=>s.trim()).filter(Boolean);
+        const allow = new Set(["cruiser","standard","sportbike","naked","adventure","touring","dual_sport"]);
+        profile.bike_types = arr.filter(x=>allow.has(x));
+        changed.push(`types=${profile.bike_types.join(',')||'none'}`);
+      }
       else if(k==='k'){ profile.k = clamp(parseInt(v||'3',10),1,6); changed.push(`k=${profile.k}`); }
     });
     return changed;
@@ -353,29 +468,45 @@
   }
 
   // --------- Buttons ---------
-  btnReRun.addEventListener('click', async ()=>{
-    await runAndSave();
-  });
+  btnReRun.addEventListener('click', async ()=>{ await runAndSave(); });
   btnClearHistory.addEventListener('click', ()=>{
     history = [];
     writeJSON('rr.history', history);
     renderVisibleFromHistory();
     renderTimeline();
     updateMeta();
+    // reset first-run flag so next run uses style-first again (optional; keep false to avoid loop)
+  });
+
+  // --------- One-time popups ---------
+  function openBackdrop(){ backdrop.style.display='block'; }
+  function closeBackdrop(){ backdrop.style.display='none'; }
+
+  function openAbs(){ openBackdrop(); absModal.style.display='block'; }
+  function closeAbs(){ absModal.style.display='none'; closeBackdrop(); sessionStorage.setItem('rr.absWarned','1'); }
+  absOk.addEventListener('click', closeAbs);
+
+  function openMsrp(){ openBackdrop(); msrpModal.style.display='block'; }
+  function closeMsrp(){ msrpModal.style.display='none'; closeBackdrop(); }
+  msrpCancel.addEventListener('click', ()=>{ pendingOfficialHref=null; closeMsrp(); });
+  msrpProceed.addEventListener('click', ()=>{
+    sessionStorage.setItem('rr.msrpWarned','1');
+    const href = pendingOfficialHref; pendingOfficialHref = null;
+    closeMsrp();
+    if(href){ window.open(href, '_blank', 'noopener'); }
   });
 
   // --------- Init ---------
   (async function init(){
     writeJSON('rr.profile', profile); // ensure present
     updateMeta();
-    // If no history yet, run once on entry
+    // If no history yet, run once on entry (style-first bias)
     if(history.length === 0){
       await runAndSave();
     }else{
       renderVisibleFromHistory();
       renderTimeline();
     }
-    // default tab
     switchTab('recs');
   })();
 })();

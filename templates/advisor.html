@@ -12,31 +12,52 @@
   <!-- Inputs -->
   <div class="section-pad" style="display:grid; gap:1rem;">
     <form id="inputsForm" style="display:grid; gap:1rem;">
+      <!-- Experience -->
       <div style="display:grid; gap:.5rem;">
         <label for="experience" style="font-weight:600;">Experience</label>
         <select id="experience" name="experience" style="padding:.7rem; border:1px solid var(--border); border-radius:10px;">
-          <option value="new" selected>New rider</option>
-          <option value="returning">Returning rider</option>
+          <option value="no_experience" selected>No Experience</option>
+          <option value="little_experience">Little Experience (dirt/ATV)</option>
         </select>
       </div>
 
+      <!-- Height -->
       <div style="display:grid; gap:.5rem;">
         <label for="height_cm" style="font-weight:600;">Height (cm)</label>
         <input id="height_cm" name="height_cm" type="number" min="140" max="210" value="170"
                style="padding:.7rem; border:1px solid var(--border); border-radius:10px;">
       </div>
 
+      <!-- Budget -->
       <div style="display:grid; gap:.5rem;">
         <label for="budget_usd" style="font-weight:600;">Budget (USD)</label>
         <input id="budget_usd" name="budget_usd" type="number" min="1000" max="20000" step="100" value="6000"
                style="padding:.7rem; border:1px solid var(--border); border-radius:10px;">
       </div>
 
-      <div style="display:flex; align-items:center; gap:.5rem;">
-        <input id="abs_toggle" type="checkbox" checked>
-        <label for="abs_toggle">Require ABS</label>
+      <!-- Bike Types (multi-select checkbox dropdown) -->
+      <div style="display:grid; gap:.5rem; position:relative;">
+        <label style="font-weight:600;">Bike Type(s)</label>
+        <button id="typesToggle" type="button" class="btn btn-outline" aria-expanded="false"
+                style="justify-self:start;">Select types (optional)</button>
+        <div id="typesMenu" class="card" style="display:none; position:absolute; top:100%; left:0; z-index:20; border:1px solid var(--border); padding:.5rem; margin-top:.25rem; min-width:260px;">
+          <label style="display:flex; gap:.5rem; align-items:center; padding:.25rem .5rem;"><input type="checkbox" value="cruiser"> Cruiser</label>
+          <label style="display:flex; gap:.5rem; align-items:center; padding:.25rem .5rem;"><input type="checkbox" value="standard"> Standard</label>
+          <label style="display:flex; gap:.5rem; align-items:center; padding:.25rem .5rem;"><input type="checkbox" value="sportbike"> Sportbike</label>
+          <label style="display:flex; gap:.5rem; align-items:center; padding:.25rem .5rem;"><input type="checkbox" value="naked"> Naked</label>
+          <label style="display:flex; gap:.5rem; align-items:center; padding:.25rem .5rem;"><input type="checkbox" value="adventure"> Adventure</label>
+          <label style="display:flex; gap:.5rem; align-items:center; padding:.25rem .5rem;"><input type="checkbox" value="touring"> Touring</label>
+          <label style="display:flex; gap:.5rem; align-items:center; padding:.25rem .5rem;"><input type="checkbox" value="dual_sport"> Dual-sport</label>
+          <div style="display:flex; gap:.5rem; padding:.5rem .25rem;">
+            <button type="button" id="typesClear" class="btn btn-outline">Clear</button>
+            <button type="button" id="typesClose" class="btn btn-primary">Done</button>
+          </div>
+        </div>
+        <div id="typesSummary" class="subtitle">None selected (we’ll consider all).</div>
+        <p class="subtitle" style="margin:0;">Tip: We generally recommend choosing ABS if available, but we’ll still show non-ABS models.</p>
       </div>
 
+      <!-- K -->
       <div style="display:grid; gap:.5rem;">
         <label for="k" style="font-weight:600;">How many results? (1–6)</label>
         <input id="k" name="k" type="number" min="1" max="6" value="3"
@@ -57,28 +78,85 @@
   const experience = document.getElementById('experience');
   const height_cm  = document.getElementById('height_cm');
   const budget_usd = document.getElementById('budget_usd');
-  const abs_toggle = document.getElementById('abs_toggle');
   const kEl        = document.getElementById('k');
   const btnGet     = document.getElementById('btnGet');
 
+  const typesToggle = document.getElementById('typesToggle');
+  const typesMenu   = document.getElementById('typesMenu');
+  const typesClose  = document.getElementById('typesClose');
+  const typesClear  = document.getElementById('typesClear');
+  const typesSummary= document.getElementById('typesSummary');
+
+  function clamp(n, min, max){ return Math.max(min, Math.min(max, n||min)); }
+
+  function getSelectedTypes(){
+    const boxes = typesMenu.querySelectorAll('input[type="checkbox"]');
+    return Array.from(boxes).filter(b=>b.checked).map(b=>b.value);
+  }
+  function setSelectedTypes(arr){
+    const set = new Set(arr||[]);
+    const boxes = typesMenu.querySelectorAll('input[type="checkbox"]');
+    boxes.forEach(b=> b.checked = set.has(b.value));
+  }
+  function updateTypesSummary(){
+    const t = getSelectedTypes();
+    typesSummary.textContent = t.length ? `Selected: ${t.join(', ')}` : 'None selected (we’ll consider all).';
+  }
+
+  typesToggle.addEventListener('click', ()=>{
+    const open = typesMenu.style.display === 'block';
+    typesMenu.style.display = open ? 'none' : 'block';
+    typesToggle.setAttribute('aria-expanded', (!open).toString());
+  });
+  typesClose.addEventListener('click', ()=>{
+    typesMenu.style.display = 'none';
+    typesToggle.setAttribute('aria-expanded', 'false');
+    updateTypesSummary();
+  });
+  typesClear.addEventListener('click', ()=>{
+    setSelectedTypes([]);
+    updateTypesSummary();
+  });
+  document.addEventListener('click',(e)=>{
+    if(!typesMenu.contains(e.target) && !typesToggle.contains(e.target)){
+      typesMenu.style.display='none';
+      typesToggle.setAttribute('aria-expanded', 'false');
+    }
+  });
+
   btnGet.addEventListener('click', () => {
     const profile = {
-      experience: experience.value,
+      experience: experience.value,                                  // "no_experience" | "little_experience"
       height_cm: clamp(parseInt(height_cm.value || '170',10), 140, 210),
       budget_usd: clamp(parseInt(budget_usd.value || '6000',10), 1000, 20000),
-      riding_style: [],
-      must_have: abs_toggle.checked ? ['abs'] : [],
+      bike_types: getSelectedTypes(),                                // array; can be empty
+      riding_style: [],                                              // reserved
       k: clamp(parseInt(kEl.value || '3',10), 1, 6)
     };
     sessionStorage.setItem('rr.profile', JSON.stringify(profile));
-    // Start a fresh recommendations history for this session if not present
     if(!sessionStorage.getItem('rr.history')){
       sessionStorage.setItem('rr.history', JSON.stringify([]));
     }
+    // Reset session one-time popups
+    sessionStorage.removeItem('rr.absWarned');
+    sessionStorage.removeItem('rr.msrpWarned');
     window.location.href = "{{ url_for('recommendations') }}";
   });
 
-  function clamp(n, min, max){ return Math.max(min, Math.min(max, n||min)); }
+  // Restore prior selections if returning
+  (function init(){
+    try{
+      const prev = JSON.parse(sessionStorage.getItem('rr.profile')||'');
+      if(prev){
+        experience.value = prev.experience || 'no_experience';
+        height_cm.value  = prev.height_cm || 170;
+        budget_usd.value = prev.budget_usd || 6000;
+        kEl.value        = prev.k || 3;
+        setSelectedTypes(prev.bike_types || []);
+        updateTypesSummary();
+      }
+    }catch{ updateTypesSummary(); }
+  })();
 })();
 </script>
 {% endblock %}
