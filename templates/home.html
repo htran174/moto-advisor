@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
   <section class="card section-pad">
-    <div class="grid grid-3" style="min-height: 60vh;">
+    <div class="grid grid-3" style="min-height: 30vh;">
       <!-- Left image column (existing decorative) -->
       <aside style="display:flex; align-items:center; justify-content:center;">
         <img src="{{ url_for('static', filename='left.png') }}" alt="" style="max-width:100%; max-height:100%; object-fit:cover;">
       </aside>
 
       <!-- Center content -->
-      <div style="padding: 1rem 1.25rem; display:flex; flex-direction:column; justify-content:center; text-align:center;">
+      <div style="padding: 1rem 1.25rem; display:flex; flex-direction:column; justify-content:center; text-align:center; max-width: 450px; margin: 0 auto;">
         <h2 class="title">Welcome to {{ app_title }}</h2>
         <p class="subtitle" style="margin-bottom: 1rem;">
           Beginner-friendly motorcycle & gear guidance with verified sources.
