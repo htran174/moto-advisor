@@ -1,196 +1,128 @@
-"""
-RideReady Advisor — Flask backend
-"""
-
-import os, json, re
+# app.py
+from flask import Flask, render_template, jsonify, request, url_for
 from pathlib import Path
-from flask import Flask, render_template, request, jsonify
-from dotenv import load_dotenv
+import json
 
-# Local services
-from services.recommend_rules import recommend, validate_profile
-from services.images import get_images
-
-# --------------------------------------------------------------------
-# App constants / paths
-# --------------------------------------------------------------------
 APP_TITLE = "RideReady"
-ROOT: Path = Path(__file__).resolve().parent
-DATA_DIR: Path = ROOT / "data"
-STATIC_DIR: Path = ROOT / "static"
-TEMPLATES_DIR: Path = ROOT / "templates"
+ROOT = Path(__file__).resolve().parent
+DATA_DIR = ROOT / "data"
+STATIC_DIR = ROOT / "static"
 
-# --------------------------------------------------------------------
-# Flask app
-# --------------------------------------------------------------------
 app = Flask(
     __name__,
+    template_folder=str(ROOT / "templates"),
     static_folder=str(STATIC_DIR),
-    template_folder=str(TEMPLATES_DIR),
 )
 
-# Make the app title available in all templates
+# Make APP_TITLE available to all templates (home.html uses {{ app_title }})
 @app.context_processor
 def inject_globals():
     return {"app_title": APP_TITLE}
 
-# --------------------------------------------------------------------
-# Env / keys / mode
-# --------------------------------------------------------------------
-load_dotenv()
-
-GOOGLE_CSE_KEY = os.getenv("GOOGLE_CSE_KEY")
-GOOGLE_CSE_ENGINE = os.getenv("GOOGLE_CSE_ENGINE")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-OFFLINE_MODE = not (GOOGLE_CSE_KEY and GOOGLE_CSE_ENGINE and OPENAI_API_KEY)
-print(f"[RideReady] OFFLINE_MODE={OFFLINE_MODE}")
-
-# --------------------------------------------------------------------
-# Data loading
-# --------------------------------------------------------------------
-def load_json(path: Path):
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"[WARN] Failed to load {path}: {e}")
-        return []
-
-BIKES = load_json(DATA_DIR / "bikes.json")
-# Gear is out-of-scope for now; we keep the file load to avoid errors if referenced elsewhere
-GEAR = load_json(DATA_DIR / "gear.json")
-
-# --------------------------------------------------------------------
-# Pages
-# --------------------------------------------------------------------
+# ---------- Pages ----------
 @app.route("/")
 def home():
-    return render_template("home.html", page_title="Home")
+    return render_template("home.html")
 
 @app.route("/advisor")
 def advisor():
-    return render_template("advisor.html", page_title="Advisor")
+    return render_template("advisor.html")
 
 @app.route("/recommendations")
 def recommendations():
-    return render_template("recommendations.html", page_title="Recommendations")
+    return render_template("recommendations.html")
 
 @app.route("/disclaimer")
 def disclaimer():
-    return render_template("disclaimer.html", page_title="Disclaimer")
+    return render_template("disclaimer.html")
 
-# --------------------------------------------------------------------
-# Health
-# --------------------------------------------------------------------
-@app.route("/healthz")
-def healthz():
-    try:
-        return jsonify({
-            "status": "ok",
-            "offline_mode": OFFLINE_MODE,
-            "keys_present": {
-                "google_cse_engine": bool(GOOGLE_CSE_ENGINE),
-                "google_cse_key": bool(GOOGLE_CSE_KEY),
-                "openai": bool(OPENAI_API_KEY)
-            },
-            "whitelist": {
-                "bikes": len(BIKES),
-                "gear": len(GEAR)
-            }
-        })
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+# ---------- Utilities ----------
+def load_bikes():
+    with open(DATA_DIR / "bikes.json", "r", encoding="utf-8") as f:
+        return json.load(f)
 
-# --------------------------------------------------------------------
-# API: recommend
-# --------------------------------------------------------------------
-@app.post("/api/recommend")
+def basic_filter(items, profile):
+    """Very light filtering to prove the flow works."""
+    want_types = set(profile.get("bike_types") or [])
+    k = int(max(1, min(6, profile.get("k", 3))))
+    # If user picked no types, just return the first k
+    if not want_types:
+        return items[:k]
+    out = [b for b in items if b.get("category") in want_types]
+    if len(out) < k:
+        # top-up with anything else
+        seen = {id(b) for b in out}
+        for b in items:
+            if id(b) not in seen:
+                out.append(b)
+            if len(out) >= k:
+                break
+    return out[:k]
+
+def pick_reasons(bike, profile):
+    reasons = []
+    # friendly demo reasons
+    if bike.get("abs"):
+        reasons.append("ABS available for safer braking")
+    if bike.get("engine_cc", 0) <= 400:
+        reasons.append("Beginner-friendly displacement (≤400cc)")
+    if bike.get("seat_height_mm"):
+        reasons.append(f"Seat height ~{bike['seat_height_mm']} mm")
+    return reasons[:3]
+
+def local_image_url(local_image):
+    if not local_image:
+        return url_for("static", filename="stock_images/motorcycle_ride.jpg")
+    # put your JPGs in static/stock_images/
+    return url_for("static", filename=f"stock_images/{local_image}")
+
+# ---------- APIs expected by JS ----------
+@app.route("/api/recommend", methods=["POST"])
 def api_recommend():
-    """
-    Body:
-      {
-        "experience": "no_experience" | "little_experience",
-        "height_cm": 170,
-        "budget_usd": 6000,
-        "bike_types": ["sportbike","naked"],
-        "k": 3
-      }
-    """
-    try:
-        payload = request.get_json(force=True, silent=False) or {}
-    except Exception:
-        return {"error": {"code": "bad_json", "message": "Invalid JSON"}}, 400
+    profile = request.get_json(force=True) or {}
+    bikes = load_bikes()
+    chosen = basic_filter(bikes, profile)
+    # add reasons for the cards
+    for b in chosen:
+        b["reasons"] = pick_reasons(b, profile)
+    return jsonify({"items": chosen})
 
-    try:
-        profile = validate_profile(payload)
-        items = recommend(BIKES, profile)
-        return jsonify({"count": len(items), "items": items, "profile": profile})
-    except Exception as e:
-        print(f"[ERROR] /api/recommend: {e}")
-        return {"error": {"code": "server_error", "message": "Internal error"}}, 500
-
-# --------------------------------------------------------------------
-# API: images
-# --------------------------------------------------------------------
-@app.post("/api/images")
+@app.route("/api/images", methods=["POST"])
 def api_images():
-    """
-    Body:
-      {
-        "query": "Yamaha MT-03 2023",
-        "limit": 1,
-        "mfr_domain": "yamahamotorsports.com",
-        "local_image": "Yamaha_mt03.jpg"   # optional hint from whitelist
-      }
-    """
-    try:
-        payload = request.get_json(force=True, silent=False) or {}
-    except Exception:
-        return {"error": {"code": "bad_json", "message": "Invalid JSON"}}, 400
+    """Return a single best image URL for the given bike id/local_image.
+       Your recommendations.js falls back to /static/motorcyle_ride.jpg (typo); we’ll give a good local path."""
+    data = request.get_json(force=True) or {}
+    local = data.get("local_image")
+    return jsonify({"images": [{"url": local_image_url(local)}]})
 
-    # Basic sanitation: trim strings, clamp lengths
-    clean = {}
-    for k, v in payload.items():
-        if isinstance(v, str):
-            clean[k] = v.strip()[:128]
-        elif isinstance(v, (int, float)):
-            clean[k] = v
-        else:
-            clean[k] = str(v)[:128]
+@app.route("/api/chat", methods=["POST"])
+def api_chat():
+    """Prototype: echo a small plan and possibly trigger a re-run on the client."""
+    req = request.get_json(force=True) or {}
+    msg = (req.get("message") or "").strip().lower()
+    actions = []
+    say = "Got it."
+    if msg.startswith("/set"):
+        # demo: /set k=3
+        try:
+            patch = {}
+            for part in msg.split()[1:]:
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    if k == "k":
+                        patch["k"] = int(v)
+            if patch:
+                actions.append({"type": "UPDATE_PROFILE", "patch": patch})
+                say = f"Updated profile: {patch}. "
+        except Exception:
+            pass
+    if "/rec" in msg or "recommend" in msg:
+        actions.append({"type": "RECOMMEND"})
+        say += "I’ll refresh your recommendations."
+    return jsonify({"message": say, "actions": actions})
 
-    try:
-        data = get_images(
-            clean,
-            OFFLINE_MODE,
-            {
-                "GOOGLE_CSE_KEY": GOOGLE_CSE_KEY,
-                "GOOGLE_CSE_ENGINE": GOOGLE_CSE_ENGINE
-            } if not OFFLINE_MODE else None
-        )
-        return jsonify(data)
-    except Exception as e:
-        print(f"[ERROR] /api/images: {e}")
-        # Safe fallback image
-        return jsonify({
-            "source": "offline",
-            "images": [{"url": "/static/motorcyle_ride.jpg", "width": 1200, "height": 800}]
-        })
-
-# --------------------------------------------------------------------
-# Security headers
-# --------------------------------------------------------------------
-@app.after_request
-def add_headers(resp):
-    resp.headers["Cache-Control"] = "no-store"
-    resp.headers["X-Content-Type-Options"] = "nosniff"
-    resp.headers["X-Frame-Options"] = "DENY"
-    resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    return resp
-
-# --------------------------------------------------------------------
-# Main
-# --------------------------------------------------------------------
 if __name__ == "__main__":
-    # Use localhost only for dev; Gunicorn will serve in multi-worker later
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    # Ensure folders exist
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    (STATIC_DIR / "stock_images").mkdir(parents=True, exist_ok=True)
+    app.run(debug=True)
