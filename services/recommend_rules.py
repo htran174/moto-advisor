@@ -1,88 +1,123 @@
 # services/recommend_rules.py
-from dataclasses import dataclass
-from typing import Dict, Any, List, Tuple
+from __future__ import annotations
+from typing import Dict, List, Any
+import math
 
-@dataclass
-class RiderProfile:
-    experience: str            # "new" | "returning"
-    height_cm: int             # e.g., 170
-    budget_usd: int            # e.g., 6000
-    riding_style: List[str]    # e.g., ["commute","weekend"]
-    must_have: List[str]       # e.g., ["abs"]
+ALLOWED_TYPES = {"cruiser", "standard", "sportbike", "naked", "adventure", "touring", "dual_sport"}
 
-def estimate_inseam_cm(height_cm: int) -> float:
-    # Simple anthropometric approximation (works well enough for coarse filtering)
-    return round(height_cm * 0.45, 1)
+def clamp(n: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, int(n)))
 
-def budget_tier(budget_usd: int) -> str:
-    if budget_usd < 4500: return "low"
-    if budget_usd <= 8000: return "mid"
-    return "high"
+def validate_profile(p: Dict[str, Any]) -> Dict[str, Any]:
+    exp = p.get("experience", "no_experience")
+    if exp not in ("no_experience", "little_experience"):
+        exp = "no_experience"
 
-def score_bike(bike: Dict[str, Any], profile: RiderProfile) -> Tuple[float, List[str]]:
-    """
-    Returns (score, reasons[])
-    """
-    reasons: List[str] = []
-    score = 0.0
+    height_cm = clamp(p.get("height_cm", 170), 140, 210)
+    budget_usd = clamp(p.get("budget_usd", 6000), 1000, 20000)
 
-    # 1) ABS preference
-    if "abs" in [s.lower() for s in profile.must_have]:
-        if bike.get("abs"):
-            score += 15; reasons.append("Has ABS (requested)")
-        else:
-            return (-1, ["Rejected: lacks ABS which you requested"])
+    k = clamp(p.get("k", 3), 1, 6)
 
-    # 2) Weight (lighter is friendlier)
-    w = bike.get("wet_weight_kg", 999)
-    if w <= 175: score += 18; reasons.append("Lightweight")
-    elif w <= 190: score += 10; reasons.append("Moderate weight")
-    else: score += 2; reasons.append("Heavier for a beginner")
+    bike_types = p.get("bike_types") or []
+    if not isinstance(bike_types, list):
+        bike_types = []
+    bike_types = [t for t in bike_types if t in ALLOWED_TYPES][:5]
 
-    # 3) Engine displacement (gentle for new riders)
-    cc = bike.get("engine_cc", 9999)
-    cat = (bike.get("category") or "").lower()
-    if profile.experience == "new":
-        if cat == "cruiser":
-            # cruisers tolerate a bit more cc due to tune/weight
-            cc_score = 18 if cc <= 650 else (10 if cc <= 750 else 0)
-        else:
-            cc_score = 18 if 250 <= cc <= 500 else (12 if cc < 250 else 6 if cc <= 650 else 0)
-    else:
-        cc_score = 16 if 300 <= cc <= 650 else 8
-    score += cc_score
+    return {
+        "experience": exp,
+        "height_cm": height_cm,
+        "budget_usd": budget_usd,
+        "k": k,
+        "bike_types": bike_types,
+        "riding_style": []  # reserved for future
+    }
 
-    # 4) Seat height vs estimated inseam
-    inseam_cm = estimate_inseam_cm(profile.height_cm)
-    seat_cm = bike.get("seat_height_mm", 0) / 10.0
-    delta = seat_cm - inseam_cm
-    if -3 <= delta <= 3:
-        score += 18; reasons.append("Seat height matches estimated inseam")
-    elif -5 <= delta <= 5:
-        score += 12; reasons.append("Seat height close to inseam")
-    else:
-        score += 4; reasons.append("Seat height may feel tall/short")
+def _height_match_score(seat_height_mm: int, rider_height_cm: int) -> float:
+    # crude heuristic: inseam ~ 0.45 * height_cm; target seat around inseam +/- 30mm
+    inseam_mm = rider_height_cm * 10 * 0.45
+    if seat_height_mm is None:
+        return 0.0
+    diff = abs(seat_height_mm - inseam_mm)
+    return max(0.0, 1.0 - (diff / 120.0))  # within ~12cm is good
 
-    # 5) Budget tier
-    tier = budget_tier(profile.budget_usd)
-    if bike.get("budget_tier") == tier:
-        score += 12; reasons.append(f"Fits your {tier} budget")
-    else:
-        score += 5; reasons.append("Possible with stretch or deal")
+def _beginner_power_guard(exp: str, max_speed_mph: float | None, zero_to_sixty_s: float | None) -> float:
+    """Return a dampener (0..1) — lower if bike is very fast and rider has no experience."""
+    if exp != "no_experience":
+        return 1.0
+    damp = 1.0
+    if max_speed_mph is not None and max_speed_mph >= 115:
+        damp *= 0.9
+    if zero_to_sixty_s is not None and zero_to_sixty_s <= 5.0:
+        damp *= 0.9
+    return damp
 
-    # 6) Built-in prior (beginner_score from whitelist)
-    score += (bike.get("beginner_score", 70) - 70) * 0.6  # modest influence
+def _base_reason_list(bike: Dict[str, Any], prof: Dict[str, Any]) -> List[str]:
+    R = []
+    if bike.get("abs") is True:
+        R.append("Has ABS")
+    if bike.get("wet_weight_kg") is not None and bike["wet_weight_kg"] <= 172:
+        R.append("Lightweight")
+    if bike.get("seat_height_mm") is not None:
+        hm = _height_match_score(bike["seat_height_mm"], prof["height_cm"])
+        if hm >= 0.7:
+            R.append("Seat height close to estimated inseam")
+    return R[:5]
 
-    return (round(score, 2), reasons)
+def recommend(bikes: List[Dict[str, Any]], profile: Dict[str, Any]) -> List[Dict[str, Any]]:
+    prof = validate_profile(profile)
 
-def shortlist(bikes: List[Dict[str, Any]], profile: RiderProfile, k: int = 3) -> List[Dict[str, Any]]:
-    scored: List[Tuple[float, Dict[str, Any], List[str]]] = []
+    # Type filter (optional)
+    filtered = []
+    bt_set = set(prof["bike_types"])
     for b in bikes:
-        s, rs = score_bike(b, profile)
-        if s >= 0:
-            item = dict(b)
-            item["_score"] = s
-            item["_reasons"] = rs
-            scored.append((s, item, rs))
-    scored.sort(key=lambda t: t[0], reverse=True)
-    return [t[1] for t in scored[:k]]
+        cat = (b.get("category") or "").lower()
+        if bt_set and cat not in bt_set:
+            continue
+        filtered.append(b)
+
+    # Score with light heuristics
+    ranked = []
+    for b in filtered:
+        score = 0.0
+        # Height match
+        score += 0.6 * _height_match_score(b.get("seat_height_mm"), prof["height_cm"])
+        # Weight preference (lighter is nicer for beginners)
+        w = b.get("wet_weight_kg")
+        if isinstance(w, (int, float)):
+            score += 0.25 * max(0.0, 1.0 - (w - 150) / 60.0)  # 150kg → 1.0, 210kg → 0.0 approx
+        # ABS small bonus
+        if b.get("abs") is True:
+            score += 0.05
+        # Beginner guard on spicy bikes
+        damp = _beginner_power_guard(prof["experience"], b.get("max_speed_mph"), b.get("zero_to_sixty_s"))
+        score *= damp
+
+        ranked.append((score, b))
+
+    ranked.sort(key=lambda t: t[0], reverse=True)
+    k = prof["k"]
+    out: List[Dict[str, Any]] = []
+    for score, b in ranked[:k*3]:  # take extra then the client can prefer style-first; also gives us buffer
+        item = {
+            "id": b["id"],
+            "name": b["name"],
+            "manufacturer": b["manufacturer"],
+            "category": b["category"],
+            "engine_cc": b.get("engine_cc"),
+            "seat_height_mm": b.get("seat_height_mm"),
+            "wet_weight_kg": b.get("wet_weight_kg"),
+            "abs": b.get("abs"),
+            # performance
+            "max_speed_mph": b.get("max_speed_mph"),
+            "zero_to_sixty_s": b.get("zero_to_sixty_s"),
+            # links
+            "official_url": b.get("official_url"),
+            "mfr_domain": b.get("mfr_domain"),
+            # reasons
+            "reasons": _base_reason_list(b, prof),
+            # hint for images service (prefer local)
+            "local_image": b.get("local_image")
+        }
+        out.append(item)
+
+    return out[:max(k, 1)]
