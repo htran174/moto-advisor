@@ -1,161 +1,185 @@
-from __future__ import annotations
-import json, os
-from pathlib import Path
-from dataclasses import asdict
-from typing import Any, Dict, List
-from flask import Flask, jsonify, render_template, request
+"""
+RideReady Advisor — Flask backend
+Author: Hien Tran
+License: GNU GPLv3
+"""
+
+import os, json, re
+from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
 
-from services.recommend_rules import RiderProfile, shortlist
-from services.images import search_images
+# Local imports
+from services.recommend_rules import recommend, validate_profile
+from services.images import get_images
 
-load_dotenv()  # loads .env if present
+# --------------------------------------------------------------------
+# Setup
+# --------------------------------------------------------------------
 
-APP_TITLE = "RideReady"
-ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
 
-app = Flask(__name__)
+load_dotenv()  # load .env for API keys
 
-# ------------ utilities ------------
-def json_load(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+# Environment keys
+GOOGLE_CSE_KEY = os.getenv("GOOGLE_CSE_KEY")
+GOOGLE_CSE_ENGINE = os.getenv("GOOGLE_CSE_ENGINE")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-def fail(message: str, code: str = "BAD_REQUEST", http=400):
-    return jsonify({"error": {"code": code, "message": message}}), http
+OFFLINE_MODE = not (GOOGLE_CSE_KEY and GOOGLE_CSE_ENGINE and OPENAI_API_KEY)
+print(f"Offline mode: {OFFLINE_MODE}")
 
-def ok(payload: Dict[str, Any]):
-    return jsonify(payload)
+# --------------------------------------------------------------------
+# Load data
+# --------------------------------------------------------------------
+def load_json(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[WARN] Failed to load {path}: {e}")
+        return []
 
-def env_bool(name: str, default=False) -> bool:
-    v = os.getenv(name)
-    if v is None: return default
-    return str(v).lower() in ("1", "true", "yes", "on")
+BIKES = load_json(os.path.join(DATA_DIR, "bikes.json"))
+GEAR = load_json(os.path.join(DATA_DIR, "gear.json"))  # unused for now
 
-# ------------ load whitelist ------------
-try:
-    BIKES: List[Dict[str, Any]] = json_load(DATA_DIR / "bikes.json")
-    GEAR:  List[Dict[str, Any]] = json_load(DATA_DIR / "gear.json")
-except FileNotFoundError as e:
-    BIKES, GEAR = [], []
-    print("⚠️  Whitelist missing: ", e)
+# --------------------------------------------------------------------
+# Flask app
+# --------------------------------------------------------------------
+app = Flask(__name__, static_folder="static", template_folder="templates")
 
-# Basic schema sanity (lightweight — expand later if needed)
-REQUIRED_BIKE_FIELDS = {"id","name","manufacturer","category","engine_cc","seat_height_mm","wet_weight_kg","abs","beginner_score","budget_tier","official_url","mfr_domain"}
+# --------------------------------------------------------------------
+# Routes: HTML pages
+# --------------------------------------------------------------------
 
-def validate_whitelist() -> List[str]:
-    errs: List[str] = []
-    for b in BIKES:
-        missing = REQUIRED_BIKE_FIELDS - set(b.keys())
-        if missing:
-            errs.append(f"Bike {b.get('id') or b.get('name')}: missing {sorted(missing)}")
-    return errs
-
-VALIDATION_ERRORS = validate_whitelist()
-if VALIDATION_ERRORS:
-    print("⚠️  Whitelist validation warnings:")
-    for e in VALIDATION_ERRORS: print("   -", e)
-
-# ------------ context ------------
-@app.context_processor
-def inject_app_title():
-    return {"app_title": APP_TITLE}
-
-# ------------ pages ------------
 @app.route("/")
 def home():
-    return render_template("home.html", page_title="Home")
-
-@app.route("/disclaimer")
-def disclaimer():
-    return render_template("disclaimer.html", page_title="Disclaimer")
+    return render_template("home.html")
 
 @app.route("/advisor")
 def advisor():
-    return render_template("advisor.html", page_title="Advisor")
+    return render_template("advisor.html")
 
-# ------------ health ------------
-@app.route("/healthz")
-def healthz():
-    keys = {
-        "openai": bool(os.getenv("OPENAI_API_KEY")),
-        "google_cse_key": bool(os.getenv("GOOGLE_CSE_KEY")),
-        "google_cse_engine": bool(os.getenv("GOOGLE_CSE_ENGINE_ID")),
-    }
-    return ok({
-        "status": "ok",
-        "offline_mode": env_bool("OFFLINE_MODE", False),
-        "whitelist": {"bikes": len(BIKES), "gear": len(GEAR)},
-        "keys_present": keys
-    })
-
-# ------------ API: recommend (v1 rules only, deterministic) ------------
-@app.route("/api/recommend", methods=["POST"])
-def api_recommend():
-    try:
-        payload = request.get_json(force=True) or {}
-    except Exception:
-        return fail("Invalid JSON body.", "INVALID_JSON")
-
-    # Coerce inputs with safe defaults
-    profile = RiderProfile(
-        experience = str(payload.get("experience") or "new").lower(),
-        height_cm  = int(payload.get("height_cm") or 170),
-        budget_usd = int(payload.get("budget_usd") or 6000),
-        riding_style = list(payload.get("riding_style") or []),
-        must_have = [str(x).lower() for x in (payload.get("must_have") or [])]
-    )
-
-    if not BIKES:
-        return fail("Bike whitelist is empty or not loaded.", "NO_DATA", 500)
-
-    top = shortlist(BIKES, profile, k=int(payload.get("k") or 3))
-
-    # Project only safe fields
-    def clean(item: Dict[str, Any]) -> Dict[str, Any]:
-        allowed = {
-            "id","name","manufacturer","category","engine_cc","seat_height_mm",
-            "wet_weight_kg","abs","official_url","mfr_domain","tags","beginner_score"
-        }
-        out = {k: item[k] for k in item.keys() if k in allowed}
-        out["score"] = item.get("_score")
-        out["reasons"] = item.get("_reasons", [])
-        return out
-
-    result = [clean(x) for x in top]
-    return ok({
-        "profile": asdict(profile),
-        "count": len(result),
-        "items": result
-    })
-# ------------ API: recommendations ------------
 @app.route("/recommendations")
 def recommendations():
-    # page reads profile from sessionStorage via JS
-    return render_template("recommendations.html", page_title="Recommendations")
+    return render_template("recommendations.html")
 
+@app.route("/disclaimer")
+def disclaimer():
+    return render_template("disclaimer.html")
 
-# ------------ API: images ------------
-@app.route("/api/images", methods=["POST"])
-def api_images():
+# --------------------------------------------------------------------
+# Health check
+# --------------------------------------------------------------------
+@app.route("/healthz")
+def healthz():
     try:
-        payload = request.get_json(force=True) or {}
-    except Exception:
-        return fail("Invalid JSON body.", "INVALID_JSON")
-
-    query = (payload.get("query") or "").strip()
-    if not query:
-        return fail("Missing 'query' in request body.", "MISSING_QUERY")
-
-    # If caller knows the mfr domain, better results:
-    mfr_domain = (payload.get("mfr_domain") or "").strip() or None
-    limit = int(payload.get("limit") or 6)
-    try:
-        res = search_images(query=query, limit=limit, mfr_domain=mfr_domain)
-        return ok(res)
+        whitelist_summary = {
+            "bikes": len(BIKES),
+            "gear": len(GEAR)
+        }
+        keys_present = {
+            "google_cse_engine": bool(GOOGLE_CSE_ENGINE),
+            "google_cse_key": bool(GOOGLE_CSE_KEY),
+            "openai": bool(OPENAI_API_KEY)
+        }
+        return jsonify({
+            "status": "ok",
+            "offline_mode": OFFLINE_MODE,
+            "keys_present": keys_present,
+            "whitelist": whitelist_summary
+        })
     except Exception as e:
-        return fail(f"Image search failed: {e}", "IMAGE_SEARCH_FAILED", 502)
-# ------------ main ------------
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# --------------------------------------------------------------------
+# API: Recommendations
+# --------------------------------------------------------------------
+@app.post("/api/recommend")
+def api_recommend():
+    """
+    POST /api/recommend
+    Body:
+      {
+        "experience": "no_experience" | "little_experience",
+        "height_cm": 170,
+        "budget_usd": 6000,
+        "bike_types": ["sportbike", "naked"],
+        "k": 3
+      }
+    """
+    try:
+        payload = request.get_json(force=True, silent=False) or {}
+    except Exception:
+        return {"error": {"code": "bad_json", "message": "Invalid JSON"}}, 400
+
+    try:
+        profile = validate_profile(payload)
+        results = recommend(BIKES, profile)
+        return jsonify({
+            "count": len(results),
+            "items": results,
+            "profile": profile
+        })
+    except Exception as e:
+        print(f"[ERROR] /api/recommend: {e}")
+        return {"error": {"code": "server_error", "message": str(e)}}, 500
+
+# --------------------------------------------------------------------
+# API: Images
+# --------------------------------------------------------------------
+@app.post("/api/images")
+def api_images():
+    """
+    POST /api/images
+    Body:
+      {
+        "query": "Yamaha MT-03 2023",
+        "limit": 1,
+        "mfr_domain": "yamahamotorsports.com",
+        "local_image": "Yamaha_mt03.jpg"
+      }
+    """
+    try:
+        payload = request.get_json(force=True, silent=False) or {}
+    except Exception:
+        return {"error": {"code": "bad_json", "message": "Invalid JSON"}}, 400
+
+    # Basic input sanitation
+    for k, v in list(payload.items()):
+        if isinstance(v, str):
+            payload[k] = v.strip()[:128]  # prevent long junk
+        elif isinstance(v, (int, float)):
+            continue
+        else:
+            payload[k] = str(v)[:128]
+
+    try:
+        data = get_images(payload, OFFLINE_MODE, {
+            "GOOGLE_CSE_KEY": GOOGLE_CSE_KEY,
+            "GOOGLE_CSE_ENGINE": GOOGLE_CSE_ENGINE
+        } if not OFFLINE_MODE else None)
+        return jsonify(data)
+    except Exception as e:
+        print(f"[ERROR] /api/images: {e}")
+        return {"source": "offline", "images": [
+            {"url": "/static/motorcyle_ride.jpg", "width": 1200, "height": 800}
+        ]}
+
+# --------------------------------------------------------------------
+# Security: limit headers and disable caching
+# --------------------------------------------------------------------
+@app.after_request
+def add_headers(resp):
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    return resp
+
+# --------------------------------------------------------------------
+# Main entry
+# --------------------------------------------------------------------
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="127.0.0.1", port=5000, debug=True)
