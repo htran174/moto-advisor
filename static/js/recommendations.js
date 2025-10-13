@@ -1,200 +1,374 @@
-// Robust, no-crash version. Works even if some elements are missing.
+// static/js/recommendations.js
+(function () {
+  console.log('[RideReady] recommendations.js loaded');
 
-document.addEventListener("DOMContentLoaded", init);
+  // --------- State (session) ---------
+  let profile = readJSON('rr.profile') || {
+    experience: 'no_experience', height_cm: 170, budget_usd: 6000,
+    bike_types: [], riding_style: [], k: 3
+  };
+  let history = readJSON('rr.history') || [];
+  let hasRunOnce = history.length > 0;
 
-function $(sel) { return document.querySelector(sel); }
-function byId(id) { return document.getElementById(id); }
+  // Curated ids for initial style-first bias (safe if ids missing)
+  const STYLE_COMMON = {
+    sportbike: ["yamaha_r3", "honda_cbr300", "kawasaki_ninja_400"],
+    naked: ["yamaha_mt03", "kawasaki_z400", "ktm_390_duke", "honda_cb300r"],
+    cruiser: ["honda_rebel_300", "kawasaki_vulcan_s"],
+    standard: ["honda_cb300r", "kawasaki_z400", "yamaha_mt03"],
+    adventure: ["kawasaki_versys_x_300", "honda_cb500x_light"],
+    touring: ["kawasaki_versys_x_300"],
+    dual_sport: ["honda_crf300l"]
+  };
+  const GLOBAL_COMMON = ["yamaha_r3", "honda_cbr300", "kawasaki_ninja_400", "honda_rebel_300", "yamaha_mt03", "kawasaki_z400"];
 
-const FALLBACK_IMAGE = "/static/stock_images/motorcycle_ride.jpg"; // correct path/spelling
+  // --------- DOM refs ---------
+  const $ = (id) => document.getElementById(id);
 
-function init() {
-  // Elements (some might be null — all code guards against that)
-  const tabRecs = byId("tabRecs");
-  const tabChat = byId("tabChat");
-  const panelRecs = byId("panelRecs");
-  const panelChat = byId("panelChat");
-  const btnReRun = byId("btnReRun");
-  const btnClearHistory = byId("btnClearHistory");
-  const cards = byId("cards");
-  const loading = byId("loadingMsg");
-  const meta = byId("meta");
-  const timeline = byId("timeline");
-  const timelineWrap = byId("timelineWrap");
-  const chatInput = byId("chatInput");
-  const chatSend = byId("chatSend");
-  const chatLog = byId("chatLog");
+  const meta = $('meta');
+  const profileSummary = $('profileSummary');
 
-  // Tab wiring
-  if (tabRecs && tabChat && panelRecs && panelChat) {
-    tabRecs.addEventListener("click", () => switchTab("recs"));
-    tabChat.addEventListener("click", () => switchTab("chat"));
+  const btnReRun = $('btnReRun');
+  const btnClearHistory = $('btnClearHistory');
+
+  const tabRecs = $('tabRecs');
+  const tabChat = $('tabChat');
+  const panelRecs = $('panelRecs');
+  const panelChat = $('panelChat');
+
+  const visibleList = $('visibleList');
+  const timeline = $('timeline');
+
+  const chatBody = $('chatBody');
+  const chatForm = $('chatForm');
+  const chatInput = $('chatInput');
+
+  const backdrop = $('modalBackdrop');
+  const absModal = $('absModal'); const absOk = $('absOk');
+  const msrpModal = $('msrpModal'); const msrpCancel = $('msrpCancel'); const msrpProceed = $('msrpProceed');
+  let pendingOfficialHref = null;
+
+  // --------- Helpers ---------
+  function readJSON(k) { try { return JSON.parse(sessionStorage.getItem(k) || ''); } catch { return null; } }
+  function writeJSON(k, v) { sessionStorage.setItem(k, JSON.stringify(v)); }
+  function ts() { return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+  function nowISO() { return new Date().toISOString(); }
+  function esc(s) { return (s || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m])); }
+  function clamp(n, min, max) { return Math.max(min, Math.min(max, n || min)); }
+  function summarize(p) {
+    const t = (p.bike_types && p.bike_types.length) ? p.bike_types.join(', ') : 'any';
+    return `H:${p.height_cm}cm • Budget:$${p.budget_usd} • ${p.experience === 'no_experience' ? 'No exp' : 'Little exp'} • Types:${t} • k=${p.k}`;
   }
-
-  function switchTab(which) {
-    const isChat = which === "chat";
-    if (tabRecs) { tabRecs.classList.toggle("btn-primary", !isChat); tabRecs.classList.toggle("btn-outline", isChat); tabRecs.setAttribute("aria-selected", String(!isChat)); }
-    if (tabChat) { tabChat.classList.toggle("btn-primary", isChat); tabChat.classList.toggle("btn-outline", !isChat); tabChat.setAttribute("aria-selected", String(isChat)); }
-    if (panelRecs) panelRecs.hidden = isChat;
-    if (panelChat) panelChat.hidden = !isChat;
-  }
-
-  // Buttons
-  if (btnReRun) btnReRun.addEventListener("click", runRecommend);
-  if (btnClearHistory) btnClearHistory.addEventListener("click", clearHistory);
-  if (chatSend && chatInput) chatSend.addEventListener("click", () => sendChat(chatInput.value));
-
-  // Initial run
-  runRecommend();
-
-  // ---- functions ----
-
-  function getProfile() {
-    try {
-      const raw = sessionStorage.getItem("rr_profile");
-      return raw ? JSON.parse(raw) : {};
-    } catch {
-      return {};
+  function setSkeletons(n) {
+    if (!visibleList) return;
+    visibleList.innerHTML = '';
+    for (let i = 0; i < n; i++) {
+      const sk = document.createElement('div');
+      sk.className = 'skeleton';
+      visibleList.appendChild(sk);
     }
   }
-
-  function setLoading(on) {
-    if (loading) loading.textContent = on ? "Loading…" : "";
+  function perfLine(item) {
+    const top = (item.max_speed_mph != null) ? item.max_speed_mph : '-';
+    const zero = (item.zero_to_sixty_s != null) ? item.zero_to_sixty_s : '-';
+    return `Top speed — ${top} mph • 0–60 — ${zero} s`;
   }
 
-  function updateMeta({ count, k }) {
-    const el = meta;
-    if (!el) return; // Guard: if #meta doesn’t exist, don’t crash.
-    el.textContent = `Showing ${count} item${count === 1 ? "" : "s"} (k=${k ?? "?"}).`;
-  }
-
-  function pushTimeline(label, obj) {
-    if (!timeline) return;
-    const stamp = new Date().toLocaleString();
-    timeline.textContent += `[${stamp}] ${label}\n` + JSON.stringify(obj, null, 2) + "\n\n";
-  }
-
-  async function runRecommend() {
-    const profile = getProfile();
-    setLoading(true);
-    pushTimeline("REQUEST /api/recommend", profile);
-
-    try {
-      const res = await fetch("/api/recommend", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(profile),
-      });
-      const data = await res.json();
-      pushTimeline("RESPONSE /api/recommend", data);
-
-      const items = (data && data.items) || [];
-      if (cards) cards.innerHTML = items.map(cardHTML).join("") || `<div class="subtitle">No results. Try adjusting your inputs.</div>`;
-      updateMeta({ count: items.length, k: profile.k });
-
-      // Resolve images async (don’t block initial render)
-      for (const it of items) {
-        resolveImage(it).then((url) => {
-          const img = byId(`img_${safeId(it.id || it.name)}`);
-          if (img) img.src = url || FALLBACK_IMAGE;
-        }).catch(() => {
-          const img = byId(`img_${safeId(it.id || it.name)}`);
-          if (img) img.src = FALLBACK_IMAGE;
-        });
-      }
-    } catch (err) {
-      if (cards) cards.innerHTML = `<div class="subtitle">Error loading recommendations.</div>`;
-      pushTimeline("ERROR /api/recommend", { message: String(err) });
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function clearHistory() {
-    if (timeline) timeline.textContent = "";
-    if (timelineWrap) timelineWrap.open = false;
-  }
-
-  async function resolveImage(item) {
-    const local = item.local_image || item.image || null;
-    try {
-      const res = await fetch("/api/images", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ local_image: local, id: item.id }),
-      });
-      const data = await res.json();
-      const first = (data && data.images && data.images[0] && data.images[0].url) || null;
-      return first || FALLBACK_IMAGE;
-    } catch {
-      return FALLBACK_IMAGE;
-    }
-  }
-
-  function safeId(s) {
-    return String(s || "item").replace(/[^a-z0-9_-]/gi, "_");
-  }
-
-  function cardHTML(b) {
-    const id = safeId(b.id || b.name);
-    const reasons = Array.isArray(b.reasons) ? b.reasons.slice(0, 3) : [];
-    const specs = [];
-    if (b.engine_cc) specs.push(`${b.engine_cc} cc`);
-    if (b.abs) specs.push("ABS");
-    if (b.seat_height_mm) specs.push(`${b.seat_height_mm} mm seat`);
-
-    return `
-      <article class="card section-pad">
-        <div style="display:grid; grid-template-columns: 160px 1fr; gap:1rem; align-items:center;">
-          <img id="img_${id}" src="${FALLBACK_IMAGE}" alt="${escapeHtml(b.name || 'Bike')}" style="width:160px; height:110px; object-fit:cover; border-radius:10px; border:1px solid var(--border);" />
-          <div>
-            <h3 style="margin:.1rem 0 .35rem 0;">${escapeHtml(b.name || "Unnamed")}</h3>
-            <div class="subtitle" style="margin-bottom:.4rem;">${escapeHtml(b.category || "Motorcycle")}${specs.length ? " • " + specs.join(" • ") : ""}</div>
-            ${reasons.length ? `<ul style="margin:.25rem 0 .5rem 1rem; padding:0;">${reasons.map(r => `<li>${escapeHtml(r)}</li>`).join("")}</ul>` : ""}
-            ${b.url ? `<a href="${escapeAttr(b.url)}" target="_blank" rel="noopener" class="btn btn-outline" style="text-decoration:none;">Learn more</a>` : ""}
+  function card(item) {
+    const div = document.createElement('div');
+    div.className = 'card';
+    div.style.overflow = 'hidden';
+    div.style.border = '1px solid var(--border)';
+    const officialLinkId = `off_${(item.id || item.name).replace(/[^a-z0-9_]/gi, '')}_${Math.random().toString(36).slice(2)}`;
+    div.innerHTML = `
+      <div style="height:160px; background:#f5f5f5;">
+        <img src="${esc(item.image_url || '/static/motorcyle_ride.jpg')}" alt="${esc(item.name)}"
+             style="width:100%; height:160px; object-fit:cover; display:block;">
+      </div>
+      <div class="section-pad" style="display:grid; gap:.35rem;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:.5rem;">
+          <strong>${esc(item.name)}</strong>
+          <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
+            ${item.abs === false ? '<span class="chip warn" title="This trim may not include ABS">No ABS</span>' : ''}
           </div>
         </div>
-      </article>
+        <div class="subtitle">${esc(item.manufacturer)} • ${esc(item.category)}</div>
+        <div style="font-size:.95rem;">${esc(perfLine(item))}</div>
+        <ul style="margin:.25rem 0 0 1rem; padding:0; font-size:.95rem;">
+          ${(item.reasons || []).slice(0, 3).map(r => `<li>${esc(r)}</li>`).join('')}
+        </ul>
+        <div>
+          <a id="${officialLinkId}" href="${item.official_url}" target="_blank" rel="noopener"
+             class="btn btn-outline" style="display:inline-block; text-decoration:none; margin-top:.25rem;">Official Site</a>
+        </div>
+      </div>
     `;
-  }
-
-  function escapeHtml(s) {
-    return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
-  }
-  function escapeAttr(s) { return escapeHtml(s).replace(/"/g, "&quot;"); }
-
-  // --- Chat (optional demo) ---
-  async function sendChat(text) {
-    if (!text || !chatLog) return;
-    appendChat("you", text);
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+    setTimeout(() => {
+      const a = div.querySelector('#' + officialLinkId);
+      if (a) a.addEventListener('click', (e) => {
+        if (sessionStorage.getItem('rr.msrpWarned') === '1') return;
+        e.preventDefault();
+        pendingOfficialHref = a.href;
+        openMsrp();
       });
-      const data = await res.json();
-      appendChat("bot", data.message || "(ok)");
-      if (Array.isArray(data.actions)) {
-        for (const a of data.actions) {
-          if (a.type === "UPDATE_PROFILE" && a.patch) {
-            const prof = Object.assign(getProfile(), a.patch);
-            sessionStorage.setItem("rr_profile", JSON.stringify(prof));
-          }
-          if (a.type === "RECOMMEND") {
-            runRecommend();
-          }
-        }
-      }
-    } catch (e) {
-      appendChat("bot", "Error talking to server.");
+    }, 0);
+    return div;
+  }
+
+  function renderVisibleFromHistory() {
+    if (!visibleList) return;
+    const seen = new Set();
+    const visible = [];
+    const flat = [];
+    const sorted = [...history].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+    sorted.forEach(snap => snap.items.forEach(it => flat.push({ snap, it })));
+    flat.forEach(({ it }) => {
+      const key = it.id || it.bike_id || it.name;
+      if (!seen.has(key)) { seen.add(key); visible.push(it); }
+    });
+
+    visibleList.innerHTML = '';
+    if (visible.length === 0) {
+      const p = document.createElement('p');
+      p.className = 'subtitle';
+      p.textContent = 'No saved recommendations yet. Click Re-run or use the Chat tab.';
+      visibleList.appendChild(p);
+      return;
+    }
+    visible.forEach(it => visibleList.appendChild(card(it)));
+  }
+
+  function renderTimeline() {
+    if (!timeline) return;
+    timeline.innerHTML = '';
+    const sorted = [...history].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+    sorted.forEach(snap => {
+      const wrap = document.createElement('div');
+      wrap.className = 'card';
+      wrap.style.border = '1px solid var(--border)';
+      const date = new Date(snap.created_at).toLocaleString();
+      const header = document.createElement('div');
+      header.className = 'section-pad';
+      header.style.borderBottom = '1px solid var(--border)';
+      header.style.background = 'linear-gradient(180deg,#F3F4F6,#FFFFFF)';
+      header.innerHTML = `<strong>Snapshot • ${esc(date)}</strong><div class="subtitle">${esc(summarize(snap.profile_used))}</div>`;
+      const grid = document.createElement('div');
+      grid.className = 'section-pad';
+      grid.style.display = 'grid'; grid.style.gap = '1rem';
+      snap.items.forEach(it => grid.appendChild(card(it)));
+      wrap.appendChild(header);
+      wrap.appendChild(grid);
+      timeline.appendChild(wrap);
+    });
+  }
+
+  function updateMeta() {
+    if (profileSummary) profileSummary.textContent = summarize(profile);
+    if (meta) meta.textContent = `History: ${history.length} snapshot(s) • Latest-first view (de-duplicated)`;
+  }
+
+  // --------- API calls ---------
+  async function callRecommend() {
+    setSkeletons(profile.k || 3);
+    const res = await fetch('/api/recommend', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(profile)
+    });
+    if (!res.ok) {
+      if (visibleList) visibleList.innerHTML = '<p class="subtitle">Error fetching recommendations.</p>';
+      return [];
+    }
+    const data = await res.json();
+    return data.items || [];
+  }
+
+  async function chooseImage(item) {
+    try {
+      const r = await fetch('/api/images', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: item.id,
+          query: `${item.manufacturer} ${item.name}`,
+          limit: 1,
+          mfr_domain: item.mfr_domain,
+          local_image: item.local_image
+        })
+      });
+      const j = await r.json();
+      return (j.images && j.images[0] && j.images[0].url) || '/static/motorcyle_ride.jpg';
+    } catch {
+      return '/static/motorcyle_ride.jpg';
     }
   }
 
-  function appendChat(who, text) {
-    if (!chatLog) return;
-    const wrap = document.createElement("div");
-    wrap.style.margin = ".35rem 0";
-    wrap.innerHTML = `<strong>${who === "you" ? "You" : "Assistant"}:</strong> ${escapeHtml(text)}`;
-    chatLog.appendChild(wrap);
+  async function createSnapshotFrom(items) {
+    const enriched = [];
+    for (const it of items) {
+      const image_url = await chooseImage(it);
+      enriched.push({
+        id: it.id || it.name,
+        name: it.name,
+        manufacturer: it.manufacturer,
+        category: it.category,
+        engine_cc: it.engine_cc,
+        seat_height_mm: it.seat_height_mm,
+        wet_weight_kg: it.wet_weight_kg,
+        abs: it.abs,
+        max_speed_mph: it.max_speed_mph,
+        zero_to_sixty_s: it.zero_to_sixty_s,
+        reasons: it.reasons || [],
+        official_url: it.official_url,
+        mfr_domain: it.mfr_domain,
+        image_url
+      });
+    }
+    return {
+      id: 'rr-run-' + Date.now(),
+      created_at: nowISO(),
+      profile_used: { ...profile },
+      items: enriched
+    };
   }
-}
+
+  function preferStyleCommon(items) {
+    if (hasRunOnce) return items;
+    const types = (profile.bike_types || []);
+    const desired = [];
+    if (types.length === 0) desired.push(...GLOBAL_COMMON);
+    else types.forEach(t => (STYLE_COMMON[t] || []).forEach(id => desired.push(id)));
+
+    if (!desired.length) return items;
+    const byId = new Map(items.map(it => [it.id || it.name, it]));
+    const preferred = desired.map(id => byId.get(id)).filter(Boolean);
+    const remaining = items.filter(it => !desired.includes(it.id || it.name));
+    const k = clamp(profile.k || 3, 1, 6);
+    const result = preferred.slice(0, k);
+    if (result.length < k) result.push(...remaining.slice(0, k - result.length));
+    return result;
+  }
+
+  async function runAndSave() {
+    const raw = await callRecommend();
+    const initial = preferStyleCommon(raw);
+    const snap = await createSnapshotFrom(initial);
+    history.unshift(snap);
+    history = history.slice(0, 10);
+    writeJSON('rr.history', history);
+    renderVisibleFromHistory();
+    renderTimeline();
+    updateMeta();
+
+    if (!sessionStorage.getItem('rr.absWarned')) {
+      const hasNoAbs = (snap.items || []).some(it => it.abs === false);
+      if (hasNoAbs) openAbs();
+    }
+    hasRunOnce = true;
+  }
+
+  // --------- Chat (plan-based) ---------
+  function addBubble(text, who) {
+    if (!chatBody) return;
+    const div = document.createElement('div');
+    div.className = 'bubble ' + (who === 'user' ? 'user' : 'bot');
+    div.innerHTML = `<p>${esc(text)}</p><time>${ts()}</time>`;
+    chatBody.appendChild(div);
+    chatBody.scrollTop = chatBody.scrollHeight;
+  }
+
+  chatForm && chatForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = (chatInput && chatInput.value || '').trim();
+    if (!text) return;
+    addBubble(text, 'user');
+    if (chatInput) chatInput.value = '';
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, profile })
+      });
+      const plan = await res.json();
+      if (plan.message) addBubble(plan.message, 'bot');
+
+      // Apply actions
+      if (Array.isArray(plan.actions)) {
+        let recNeeded = false;
+        for (const act of plan.actions) {
+          if (act.type === 'UPDATE_PROFILE' && act.patch) {
+            profile = { ...profile, ...act.patch };
+            writeJSON('rr.profile', profile);
+            updateMeta();
+          } else if (act.type === 'RECOMMEND') {
+            recNeeded = true;
+          }
+        }
+        if (recNeeded) {
+          addBubble('Re-running recommendations…', 'bot');
+          await runAndSave();
+          addBubble('Done. New snapshot added at the top.', 'bot');
+          // Stay on Chat; user can flip tabs manually
+        }
+      }
+    } catch {
+      addBubble('Network error. Please try again.', 'bot');
+    }
+  });
+
+  // --------- Tabs
+  function switchTab(which) {
+    if (!panelRecs || !panelChat || !tabRecs || !tabChat) return;
+    const recs = which === 'recs';
+    panelRecs.hidden = !recs;
+    panelChat.hidden = recs;
+    tabRecs.classList.toggle('active', recs);
+    tabChat.classList.toggle('active', !recs);
+    tabRecs.style.background = recs ? 'var(--primary)' : 'transparent';
+    tabRecs.style.color = recs ? '#fff' : 'var(--text)';
+    tabChat.style.background = !recs ? 'var(--primary)' : 'transparent';
+    tabChat.style.color = !recs ? '#fff' : 'var(--text)';
+  }
+  tabRecs && tabRecs.addEventListener('click', () => switchTab('recs'));
+  tabChat && tabChat.addEventListener('click', () => switchTab('chat'));
+
+  // --------- One-time popups
+  function openBackdrop() { backdrop && (backdrop.style.display = 'block'); }
+  function closeBackdrop() { backdrop && (backdrop.style.display = 'none'); }
+  function openAbs() { openBackdrop(); absModal && (absModal.style.display = 'block'); }
+  function closeAbs() { absModal && (absModal.style.display = 'none'); closeBackdrop(); sessionStorage.setItem('rr.absWarned', '1'); }
+  absOk && absOk.addEventListener('click', closeAbs);
+  function openMsrp() { openBackdrop(); msrpModal && (msrpModal.style.display = 'block'); }
+  function closeMsrp() { msrpModal && (msrpModal.style.display = 'none'); closeBackdrop(); }
+  msrpCancel && msrpCancel.addEventListener('click', () => { pendingOfficialHref = null; closeMsrp(); });
+  msrpProceed && msrpProceed.addEventListener('click', () => {
+    sessionStorage.setItem('rr.msrpWarned', '1');
+    const href = pendingOfficialHref; pendingOfficialHref = null;
+    closeMsrp();
+    if (href) window.open(href, '_blank', 'noopener');
+  });
+
+  // --------- Buttons
+  btnReRun && btnReRun.addEventListener('click', async () => { await runAndSave(); });
+  btnClearHistory && btnClearHistory.addEventListener('click', () => {
+    history = [];
+    writeJSON('rr.history', history);
+    renderVisibleFromHistory();
+    renderTimeline();
+    updateMeta();
+  });
+
+  // --------- Init
+  (async function init() {
+    writeJSON('rr.profile', profile);
+    updateMeta();
+    if (history.length === 0) {
+      await runAndSave();
+    } else {
+      renderVisibleFromHistory();
+      renderTimeline();
+    }
+    // Default to Recommendations tab; Chat will open when user clicks.
+    switchTab('recs');
+  })();
+})();
