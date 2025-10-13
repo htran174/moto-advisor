@@ -104,6 +104,9 @@
     "mfr_domain": "powersports.honda.com",
     "local_image": "honda_rebel300.jpg"
   },
+
+  /* ===== Added models (now with estimated performance) ===== */
+
   {
     "id": "suzuki_gsx250r",
     "name": "Suzuki GSX250R",
@@ -113,11 +116,11 @@
     "seat_height_mm": 790,
     "wet_weight_kg": 181,
     "abs": true,
-    "max_speed_mph": null,
-    "zero_to_sixty_s": null,
+    "max_speed_mph": 88,
+    "zero_to_sixty_s": 9.0,
     "official_url": "https://suzukicycles.com",
     "mfr_domain": "suzukicycles.com",
-    "local_image": "Suzuki_gsx250r.jpg"
+    "local_image": "suzuki_gsx250r.jpg"
   },
   {
     "id": "ktm_rc_390",
@@ -128,11 +131,11 @@
     "seat_height_mm": 824,
     "wet_weight_kg": 172,
     "abs": true,
-    "max_speed_mph": null,
-    "zero_to_sixty_s": null,
+    "max_speed_mph": 105,
+    "zero_to_sixty_s": 5.5,
     "official_url": "https://www.ktm.com/en-us/models/supersport/ktm-rc-390.html",
     "mfr_domain": "ktm.com",
-    "local_image": "KTM_rc390.jpg"
+    "local_image": "ktm_rc_390.jpg"
   },
   {
     "id": "yamaha_r7",
@@ -143,11 +146,26 @@
     "seat_height_mm": 835,
     "wet_weight_kg": 188,
     "abs": true,
-    "max_speed_mph": null,
-    "zero_to_sixty_s": null,
+    "max_speed_mph": 139,
+    "zero_to_sixty_s": 3.5,
     "official_url": "https://www.yamahamotorsports.com/supersport/models/yzf-r7",
     "mfr_domain": "yamahamotorsports.com",
-    "local_image": "Yamaha_r7.jpg"
+    "local_image": "yamaha_r7.jpg"
+  },
+  {
+    "id": "honda_cbr500",
+    "name": "Honda CBR500R",
+    "manufacturer": "Honda",
+    "category": "sportbike",
+    "engine_cc": 471,
+    "seat_height_mm": 785,
+    "wet_weight_kg": 192,
+    "abs": true,
+    "max_speed_mph": 116,
+    "zero_to_sixty_s": 5.2,
+    "official_url": "https://powersports.honda.com/motorcycle/sport/cbr500r",
+    "mfr_domain": "powersports.honda.com",
+    "local_image": "honda_cbr500.jpeg"
   },
 
   {
@@ -159,11 +177,11 @@
     "seat_height_mm": 800,
     "wet_weight_kg": 144,
     "abs": true,
-    "max_speed_mph": null,
-    "zero_to_sixty_s": null,
+    "max_speed_mph": 95,
+    "zero_to_sixty_s": 7.4,
     "official_url": "https://powersports.honda.com/motorcycle/standard/cb300r",
     "mfr_domain": "powersports.honda.com",
-    "local_image": "Honda_cb300r.jpg"
+    "local_image": "honda_cb300r.jpg"
   },
   {
     "id": "suzuki_sv650",
@@ -174,11 +192,11 @@
     "seat_height_mm": 785,
     "wet_weight_kg": 198,
     "abs": true,
-    "max_speed_mph": null,
-    "zero_to_sixty_s": null,
+    "max_speed_mph": 130,
+    "zero_to_sixty_s": 3.7,
     "official_url": "https://suzukicycles.com",
     "mfr_domain": "suzukicycles.com",
-    "local_image": "Suzuki_sv650.jpg"
+    "local_image": "suzuki_sv650.jpg"
   },
   {
     "id": "yamaha_mt07",
@@ -189,11 +207,11 @@
     "seat_height_mm": 805,
     "wet_weight_kg": 184,
     "abs": true,
-    "max_speed_mph": null,
-    "zero_to_sixty_s": null,
+    "max_speed_mph": 133,
+    "zero_to_sixty_s": 3.5,
     "official_url": "https://www.yamahamotorsports.com/hyper-naked/models/mt-07",
     "mfr_domain": "yamahamotorsports.com",
-    "local_image": "Yamaha_mt07.jpg"
+    "local_image": "yamaha_mt07.jpg"
   },
 
   {
@@ -205,11 +223,11 @@
     "seat_height_mm": 705,
     "wet_weight_kg": 228,
     "abs": true,
-    "max_speed_mph": null,
-    "zero_to_sixty_s": null,
+    "max_speed_mph": 115,
+    "zero_to_sixty_s": 4.5,
     "official_url": "https://www.kawasaki.com/en-us/motorcycle/vulcan/cruiser/vulcan-s-abs",
     "mfr_domain": "kawasaki.com",
-    "local_image": "Kawasaki_vulcan_s.jpg"
+    "local_image": "kawasaki_vulcan_s.jpg"
   },
   {
     "id": "royal_enfield_meteor_350",
@@ -220,11 +238,11 @@
     "seat_height_mm": 765,
     "wet_weight_kg": 191,
     "abs": true,
-    "max_speed_mph": null,
-    "zero_to_sixty_s": null,
+    "max_speed_mph": 75,
+    "zero_to_sixty_s": 14.0,
     "official_url": "https://www.royalenfield.com",
     "mfr_domain": "royalenfield.com",
-    "local_image": "RoyalEnfield_meteor350.jpg"
+    "local_image": "royal_enfield_meteor_350.jpg"
   },
   {
     "id": "honda_rebel_500",
@@ -235,11 +253,11 @@
     "seat_height_mm": 690,
     "wet_weight_kg": 191,
     "abs": true,
-    "max_speed_mph": null,
-    "zero_to_sixty_s": null,
+    "max_speed_mph": 100,
+    "zero_to_sixty_s": 5.7,
     "official_url": "https://powersports.honda.com/motorcycle/cruiser/rebel-500",
     "mfr_domain": "powersports.honda.com",
-    "local_image": "Honda_rebel500.jpg"
+    "local_image": "honda_rebel_500.jpg"
   },
 
   {
@@ -251,11 +269,11 @@
     "seat_height_mm": 815,
     "wet_weight_kg": 175,
     "abs": true,
-    "max_speed_mph": null,
-    "zero_to_sixty_s": null,
+    "max_speed_mph": 100,
+    "zero_to_sixty_s": 7.9,
     "official_url": "https://www.kawasaki.com/en-us/motorcycle/versys/adventure-touring/versys-x-300-abs",
     "mfr_domain": "kawasaki.com",
-    "local_image": "Kawasaki_versysx300.jpg"
+    "local_image": "kawasaki_versys_x_300.jpg"
   },
   {
     "id": "honda_cb500x_light",
@@ -266,11 +284,11 @@
     "seat_height_mm": 830,
     "wet_weight_kg": 199,
     "abs": true,
-    "max_speed_mph": null,
-    "zero_to_sixty_s": null,
+    "max_speed_mph": 103,
+    "zero_to_sixty_s": 5.9,
     "official_url": "https://powersports.honda.com/motorcycle/adventure/cb500x",
     "mfr_domain": "powersports.honda.com",
-    "local_image": "Honda_cb500x.jpg"
+    "local_image": "honda_cb500x_light.jpg"
   },
   {
     "id": "yamaha_xt250",
@@ -281,11 +299,11 @@
     "seat_height_mm": 810,
     "wet_weight_kg": 132,
     "abs": true,
-    "max_speed_mph": null,
-    "zero_to_sixty_s": null,
+    "max_speed_mph": 75,
+    "zero_to_sixty_s": 11.5,
     "official_url": "https://www.yamahamotorsports.com/dual-sport/models/xt250",
     "mfr_domain": "yamahamotorsports.com",
-    "local_image": "Yamaha_xt250.jpg"
+    "local_image": "yamaha_xt250.jpg"
   },
   {
     "id": "honda_crf300l",
@@ -296,11 +314,11 @@
     "seat_height_mm": 880,
     "wet_weight_kg": 142,
     "abs": true,
-    "max_speed_mph": null,
-    "zero_to_sixty_s": null,
+    "max_speed_mph": 80,
+    "zero_to_sixty_s": 8.7,
     "official_url": "https://powersports.honda.com/motorcycle/dual-sport/crf300l",
     "mfr_domain": "powersports.honda.com",
-    "local_image": "Honda_crf300l.jpg"
+    "local_image": "honda_crf300l.jpg"
   },
   {
     "id": "bmw_g310gs",
@@ -311,11 +329,11 @@
     "seat_height_mm": 835,
     "wet_weight_kg": 175,
     "abs": true,
-    "max_speed_mph": null,
-    "zero_to_sixty_s": null,
+    "max_speed_mph": 88,
+    "zero_to_sixty_s": 7.7,
     "official_url": "https://www.bmw-motorrad.com",
     "mfr_domain": "bmw-motorrad.com",
-    "local_image": "BMW_g310gs.jpg"
+    "local_image": "bmw_g310gs.webp"
   },
 
   {
@@ -327,28 +345,10 @@
     "seat_height_mm": 835,
     "wet_weight_kg": 213,
     "abs": true,
-    "max_speed_mph": null,
-    "zero_to_sixty_s": null,
+    "max_speed_mph": 125,
+    "zero_to_sixty_s": 3.9,
     "official_url": "https://suzukicycles.com",
     "mfr_domain": "suzukicycles.com",
-    "local_image": "Suzuki_vstrom650.jpg"
-  },
-  
-  {
-  "id": "honda_cbr500",
-  "name": "Honda CBR500R",
-  "manufacturer": "Honda",
-  "category": "sportbike",
-  "engine_cc": 471,
-  "seat_height_mm": 785,
-  "wet_weight_kg": 192,
-  "abs": true,
-  "max_speed_mph": null,
-  "zero_to_sixty_s": null,
-  "official_url": "https://powersports.honda.com/motorcycle/sport/cbr500r",
-  "mfr_domain": "powersports.honda.com",
-  "local_image": "honda_cbr500.jpeg"
-}
-
-  
+    "local_image": "suzuki_vstrom_650.jpg"
+  }
 ]
