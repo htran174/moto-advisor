@@ -1,78 +1,73 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="card" style="width:100%; max-width: 960px; overflow: hidden;">
-  <!-- Header -->
-  <div class="section-pad" style="background: linear-gradient(180deg, #F3F4F6, #FFFFFF); border-bottom:1px solid var(--border);">
-    <h2 class="title" style="display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;">
-      <span>RideReady Advisor</span>
-      <span class="subtitle" style="margin-left:auto;">No data saved • Local prototype</span>
-    </h2>
-  </div>
+<div class="card section-pad">
+  <h2 class="title">Tell us about you</h2>
+  <p class="subtitle">We’ll use this to tune the first set of bikes. You can refine later in Chat.</p>
 
-  <!-- Inputs -->
-  <div class="section-pad" style="display:grid; gap:1rem;">
-    <form id="inputsForm" style="display:grid; gap:1rem;">
+  <form id="advisorForm" data-advisor-form novalidate>
+    <div class="grid" style="margin-top:1rem;gap:1rem;">
       <!-- Experience -->
-      <div style="display:grid; gap:.5rem;">
-        <label for="experience" style="font-weight:600;">Experience</label>
-        <select id="experience" name="experience" style="padding:.7rem; border:1px solid var(--border); border-radius:10px;">
-          <option value="no_experience" selected>No Experience</option>
-          <option value="little_experience">Little Experience (dirt/ATV)</option>
+      <div>
+        <label for="experience"><strong>Riding experience</strong></label><br/>
+        <select id="experience" name="experience" class="input" required>
+          <option value="no_experience">No experience</option>
+          <option value="little_experience">A little experience</option>
         </select>
       </div>
 
       <!-- Height -->
-      <div style="display:grid; gap:.5rem;">
-        <label for="height_cm" style="font-weight:600;">Height (cm)</label>
-        <input id="height_cm" name="height_cm" type="number" min="140" max="210" value="170"
-               style="padding:.7rem; border:1px solid var(--border); border-radius:10px;">
+      <div>
+        <label for="height_cm"><strong>Your height (cm)</strong></label><br/>
+        <input id="height_cm" name="height_cm" type="number" min="130" max="210" step="1" class="input" placeholder="e.g., 170">
       </div>
 
       <!-- Budget -->
-      <div style="display:grid; gap:.5rem;">
-        <label for="budget_usd" style="font-weight:600;">Budget (USD)</label>
-        <input id="budget_usd" name="budget_usd" type="number" min="1000" max="20000" step="100" value="6000"
-               style="padding:.7rem; border:1px solid var(--border); border-radius:10px;">
+      <div>
+        <label for="budget_usd"><strong>Budget (USD)</strong></label><br/>
+        <input id="budget_usd" name="budget_usd" type="number" min="1000" max="20000" step="100" class="input" placeholder="e.g., 6000">
       </div>
 
-      <!-- Bike Types (multi-select checkbox dropdown) -->
-      <div style="display:grid; gap:.5rem; position:relative;">
-        <label style="font-weight:600;">Bike Type(s)</label>
-        <button id="typesToggle" type="button" class="btn btn-outline" aria-expanded="false"
-                style="justify-self:start;">Select types (optional)</button>
-        <div id="typesMenu" class="card" style="display:none; position:absolute; top:100%; left:0; z-index:20; border:1px solid var(--border); padding:.5rem; margin-top:.25rem; min-width:260px;">
-          <label style="display:flex; gap:.5rem; align-items:center; padding:.25rem .5rem;"><input type="checkbox" value="cruiser"> Cruiser</label>
-          <label style="display:flex; gap:.5rem; align-items:center; padding:.25rem .5rem;"><input type="checkbox" value="standard"> Standard</label>
-          <label style="display:flex; gap:.5rem; align-items:center; padding:.25rem .5rem;"><input type="checkbox" value="sportbike"> Sportbike</label>
-          <label style="display:flex; gap:.5rem; align-items:center; padding:.25rem .5rem;"><input type="checkbox" value="naked"> Naked</label>
-          <label style="display:flex; gap:.5rem; align-items:center; padding:.25rem .5rem;"><input type="checkbox" value="adventure"> Adventure</label>
-          <label style="display:flex; gap:.5rem; align-items:center; padding:.25rem .5rem;"><input type="checkbox" value="touring"> Touring</label>
-          <label style="display:flex; gap:.5rem; align-items:center; padding:.25rem .5rem;"><input type="checkbox" value="dual_sport"> Dual-sport</label>
-          <div style="display:flex; gap:.5rem; padding:.5rem .25rem;">
-            <button type="button" id="typesClear" class="btn btn-outline">Clear</button>
-            <button type="button" id="typesClose" class="btn btn-primary">Done</button>
-          </div>
-        </div>
-        <div id="typesSummary" class="subtitle">None selected (we’ll consider all).</div>
-        <p class="subtitle" style="margin:0;">Tip: We generally recommend choosing ABS if available, but we’ll still show non-ABS models.</p>
+      <!-- k -->
+      <div>
+        <label for="k"><strong>How many results (k)</strong></label><br/>
+        <input id="k" name="k" type="number" min="1" max="6" step="1" class="input" value="3">
       </div>
+    </div>
 
-      <!-- K -->
-      <div style="display:grid; gap:.5rem;">
-        <label for="k" style="font-weight:600;">How many results? (1–6)</label>
-        <input id="k" name="k" type="number" min="1" max="6" value="3"
-               style="padding:.7rem; border:1px solid var(--border); border-radius:10px;">
+    <!-- Bike types -->
+    <div style="margin-top:1rem;">
+      <div><strong>Bike types</strong> <span class="subtitle">(pick any)</span></div>
+      <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.5rem;margin-top:.5rem;">
+        {% set types = [
+          ["sportbike","Sportbike"],
+          ["naked","Naked / Standard"],
+          ["cruiser","Cruiser"],
+          ["adventure","Adventure"],
+          ["dual_sport","Dual-sport"],
+          ["standard","Standard"],
+          ["touring","Touring"]
+        ] %}
+        {% for val, label in types %}
+        <label class="chip">
+          <input type="checkbox" name="bike_types" value="{{ val }}" />
+          <span>{{ label }}</span>
+        </label>
+        {% endfor %}
       </div>
+    </div>
 
-      <div style="display:flex; gap:.75rem; align-items:center; flex-wrap:wrap;">
-        <button id="btnGet" class="btn btn-primary" type="button">Get Recommendations</button>
-        <a href="{{ url_for('disclaimer') }}" class="btn btn-outline" style="text-decoration:none;">View Disclaimer</a>
-      </div>
-      <p class="subtitle" style="margin: .25rem 0 0;">We’ll save your inputs locally and take you to the Recommendations page.</p>
-    </form>
-  </div>
-</section>
+    <div style="margin-top:1.25rem;display:flex;gap:.5rem;">
+      <button id="getRecsBtn" type="submit" class="btn btn-primary">Get recommendations</button>
+      <a href="{{ url_for('recommendations') }}" class="btn btn-outline">Skip to results</a>
+    </div>
+  </form>
+</div>
+
+<style>
+  .input{padding:.55rem .6rem;border:1px solid var(--border);border-radius:10px;width:100%;}
+  .chip{display:inline-flex;align-items:center;gap:.45rem;border:1px solid var(--border);padding:.45rem .6rem;border-radius:999px;cursor:pointer;background:#fff;}
+  .chip input{accent-color:var(--primary);}
+</style>
 
 <script src="{{ url_for('static', filename='js/advisor.js') }}" defer></script>
-
 {% endblock %}

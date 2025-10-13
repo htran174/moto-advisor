@@ -1,85 +1,58 @@
 // static/js/advisor.js
-(function () {
-  const experience = document.getElementById('experience');
-  const height_cm = document.getElementById('height_cm');
-  const budget_usd = document.getElementById('budget_usd');
-  const kEl = document.getElementById('k');
-  const btnGet = document.getElementById('btnGet');
-
-  const typesToggle = document.getElementById('typesToggle');
-  const typesMenu = document.getElementById('typesMenu');
-  const typesClose = document.getElementById('typesClose');
-  const typesClear = document.getElementById('typesClear');
-  const typesSummary = document.getElementById('typesSummary');
-
-  function clamp(n, min, max) { return Math.max(min, Math.min(max, n || min)); }
-
-  function getSelectedTypes() {
-    const boxes = typesMenu.querySelectorAll('input[type="checkbox"]');
-    return Array.from(boxes).filter(b => b.checked).map(b => b.value);
-  }
-  function setSelectedTypes(arr) {
-    const set = new Set(arr || []);
-    const boxes = typesMenu.querySelectorAll('input[type="checkbox"]');
-    boxes.forEach(b => b.checked = set.has(b.value));
-  }
-  function updateTypesSummary() {
-    const t = getSelectedTypes();
-    typesSummary.textContent = t.length ? `Selected: ${t.join(', ')}` : 'None selected (we’ll consider all).';
+(() => {
+  // ---- Reset session when the server restarts ----
+  const bootKey = "rr_boot_id";
+  const currentBoot = window.RR_BOOT_ID;
+  const lastBoot = sessionStorage.getItem(bootKey);
+  if (lastBoot !== currentBoot) {
+    sessionStorage.clear();
+    sessionStorage.setItem(bootKey, currentBoot);
+    console.log("[RideReady] Session reset after app restart");
   }
 
-  typesToggle?.addEventListener('click', () => {
-    const open = typesMenu.style.display === 'block';
-    typesMenu.style.display = open ? 'none' : 'block';
-    typesToggle.setAttribute('aria-expanded', (!open).toString());
-  });
-  typesClose?.addEventListener('click', () => {
-    typesMenu.style.display = 'none';
-    typesToggle.setAttribute('aria-expanded', 'false');
-    updateTypesSummary();
-  });
-  typesClear?.addEventListener('click', () => {
-    setSelectedTypes([]);
-    updateTypesSummary();
-  });
-  document.addEventListener('click', (e) => {
-    if (!typesMenu.contains(e.target) && !typesToggle.contains(e.target)) {
-      typesMenu.style.display = 'none';
-      typesToggle.setAttribute('aria-expanded', 'false');
+  const form = document.getElementById("advisorForm") || document.querySelector("[data-advisor-form]");
+  if (!form) return;
+
+  // Helpers
+  const toNum = (v) => (v === "" || v === undefined || v === null ? undefined : Number(v));
+
+  function readTypes() {
+    const boxes = form.querySelectorAll('input[name="bike_types"]:checked');
+    return Array.from(boxes).map(b => b.value);
+  }
+
+  function readProfileFromForm() {
+    const experience = form.querySelector('#experience')?.value || "no_experience";
+    const height_cm = toNum(form.querySelector('#height_cm')?.value);
+    const budget_usd = toNum(form.querySelector('#budget_usd')?.value);
+    const k = toNum(form.querySelector('#k')?.value) ?? 3;
+    const bike_types = readTypes();
+
+    const profile = { experience, k };
+    if (height_cm !== undefined) profile.height_cm = height_cm;
+    if (budget_usd !== undefined) profile.budget_usd = budget_usd;
+    if (bike_types.length) profile.bike_types = bike_types;
+    return profile;
+  }
+
+  function persistProfile(profile) {
+    sessionStorage.setItem("rr.profile", JSON.stringify(profile));
+  }
+
+  // Make the chip labels toggle their inner checkbox
+  form.addEventListener("click", (e) => {
+    const chip = e.target.closest(".chip");
+    if (chip) {
+      const cb = chip.querySelector('input[name="bike_types"]');
+      if (cb && e.target !== cb) cb.checked = !cb.checked;
     }
   });
 
-  btnGet?.addEventListener('click', () => {
-    const profile = {
-      experience: experience.value,
-      height_cm: clamp(parseInt(height_cm.value || '170', 10), 140, 210),
-      budget_usd: clamp(parseInt(budget_usd.value || '6000', 10), 1000, 20000),
-      bike_types: getSelectedTypes(),
-      riding_style: [],
-      k: clamp(parseInt(kEl.value || '3', 10), 1, 6)
-    };
-    sessionStorage.setItem('rr.profile', JSON.stringify(profile));
-    if (!sessionStorage.getItem('rr.history')) {
-      sessionStorage.setItem('rr.history', JSON.stringify([]));
-    }
-    sessionStorage.removeItem('rr.absWarned');
-    sessionStorage.removeItem('rr.msrpWarned');
+  // Submit -> save profile -> go to results
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const profile = readProfileFromForm();
+    persistProfile(profile);
     window.location.href = "/recommendations";
   });
-
-  (function init() {
-    try {
-      const prev = JSON.parse(sessionStorage.getItem('rr.profile') || '');
-      if (prev) {
-        experience.value = prev.experience || 'no_experience';
-        height_cm.value = prev.height_cm || 170;
-        budget_usd.value = prev.budget_usd || 6000;
-        kEl.value = prev.k || 3;
-        setSelectedTypes(prev.bike_types || []);
-        updateTypesSummary();
-        return;
-      }
-    } catch { /* noop */ }
-    updateTypesSummary();
-  })();
 })();
