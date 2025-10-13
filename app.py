@@ -1,128 +1,125 @@
-# app.py
-from flask import Flask, render_template, jsonify, request, url_for
-from pathlib import Path
+import os
 import json
+import time
+from flask import Flask, render_template, request, jsonify, url_for
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+
+# Services
+from services.nlu import make_plan
+from services.images import get_image_results
+from services.recommend_rules import load_bikes, apply_filters, pick_reasons
 
 APP_TITLE = "RideReady"
-ROOT = Path(__file__).resolve().parent
-DATA_DIR = ROOT / "data"
-STATIC_DIR = ROOT / "static"
+APP_BOOT_ID = str(int(time.time()))
 
-app = Flask(
-    __name__,
-    template_folder=str(ROOT / "templates"),
-    static_folder=str(STATIC_DIR),
-)
+app = Flask(__name__)
 
-# Make APP_TITLE available to all templates (home.html uses {{ app_title }})
-@app.context_processor
-def inject_globals():
-    return {"app_title": APP_TITLE}
+# Simple dev limiter (in-memory). Fine for local work.
+limiter = Limiter(get_remote_address, app=app, default_limits=["200/day"])
 
-# ---------- Pages ----------
+# -------------------- helpers --------------------
+
+def local_image_url(local_image: str | None) -> str:
+    if not local_image:
+        return url_for("static", filename="stock_images/motorcycle_ride.jpg")
+    if not local_image.startswith("stock_images/"):
+        local_image = f"stock_images/{local_image}"
+    return url_for("static", filename=local_image)
+
+def _run_recommend(profile: dict) -> list[dict]:
+    """Apply filters and attach reasons; return list of bikes."""
+    bikes = load_bikes()
+    chosen = apply_filters(bikes, profile)
+    for b in chosen:
+        b.setdefault("id", b.get("name"))
+        b["reasons"] = pick_reasons(b, profile)
+    return chosen
+
+# -------------------- pages ----------------------
+
 @app.route("/")
 def home():
-    return render_template("home.html")
+    return render_template("home.html",
+                           app_title=APP_TITLE, page_title="Home", boot_id=APP_BOOT_ID)
 
 @app.route("/advisor")
 def advisor():
-    return render_template("advisor.html")
+    return render_template("advisor.html",
+                           app_title=APP_TITLE, page_title="Advisor", boot_id=APP_BOOT_ID)
 
 @app.route("/recommendations")
 def recommendations():
-    return render_template("recommendations.html")
+    return render_template("recommendations.html",
+                           app_title=APP_TITLE, page_title="Recommendations", boot_id=APP_BOOT_ID)
 
 @app.route("/disclaimer")
 def disclaimer():
-    return render_template("disclaimer.html")
+    return render_template("disclaimer.html",
+                           app_title=APP_TITLE, page_title="Disclaimer", boot_id=APP_BOOT_ID)
 
-# ---------- Utilities ----------
-def load_bikes():
-    with open(DATA_DIR / "bikes.json", "r", encoding="utf-8") as f:
-        return json.load(f)
+# -------------------- APIs ----------------------
 
-def basic_filter(items, profile):
-    """Very light filtering to prove the flow works."""
-    want_types = set(profile.get("bike_types") or [])
-    k = int(max(1, min(6, profile.get("k", 3))))
-    # If user picked no types, just return the first k
-    if not want_types:
-        return items[:k]
-    out = [b for b in items if b.get("category") in want_types]
-    if len(out) < k:
-        # top-up with anything else
-        seen = {id(b) for b in out}
-        for b in items:
-            if id(b) not in seen:
-                out.append(b)
-            if len(out) >= k:
-                break
-    return out[:k]
-
-def pick_reasons(bike, profile):
-    reasons = []
-    # friendly demo reasons
-    if bike.get("abs"):
-        reasons.append("ABS available for safer braking")
-    if bike.get("engine_cc", 0) <= 400:
-        reasons.append("Beginner-friendly displacement (≤400cc)")
-    if bike.get("seat_height_mm"):
-        reasons.append(f"Seat height ~{bike['seat_height_mm']} mm")
-    return reasons[:3]
-
-def local_image_url(local_image):
-    if not local_image:
-        return url_for("static", filename="stock_images/motorcycle_ride.jpg")
-    # put your JPGs in static/stock_images/
-    return url_for("static", filename=f"stock_images/{local_image}")
-
-# ---------- APIs expected by JS ----------
 @app.route("/api/recommend", methods=["POST"])
+@limiter.limit("30/minute;300/day")
 def api_recommend():
-    profile = request.get_json(force=True) or {}
-    bikes = load_bikes()
-    chosen = basic_filter(bikes, profile)
-    # add reasons for the cards
-    for b in chosen:
-        b["reasons"] = pick_reasons(b, profile)
-    return jsonify({"items": chosen})
+    profile = request.get_json(silent=True) or {}
+    items = _run_recommend(profile)
+    return jsonify({"items": items, "profile": profile})
 
 @app.route("/api/images", methods=["POST"])
+@limiter.limit("60/minute;600/day")
 def api_images():
-    """Return a single best image URL for the given bike id/local_image.
-       Your recommendations.js falls back to /static/motorcyle_ride.jpg (typo); we’ll give a good local path."""
-    data = request.get_json(force=True) or {}
-    local = data.get("local_image")
-    return jsonify({"images": [{"url": local_image_url(local)}]})
+    data = request.get_json(silent=True) or {}
+    return jsonify(get_image_results(data))
 
 @app.route("/api/chat", methods=["POST"])
+@limiter.limit("12/minute;120/day")
 def api_chat():
-    """Prototype: echo a small plan and possibly trigger a re-run on the client."""
-    req = request.get_json(force=True) or {}
-    msg = (req.get("message") or "").strip().lower()
-    actions = []
-    say = "Got it."
-    if msg.startswith("/set"):
-        # demo: /set k=3
-        try:
-            patch = {}
-            for part in msg.split()[1:]:
-                if "=" in part:
-                    k, v = part.split("=", 1)
-                    if k == "k":
-                        patch["k"] = int(v)
-            if patch:
-                actions.append({"type": "UPDATE_PROFILE", "patch": patch})
-                say = f"Updated profile: {patch}. "
-        except Exception:
-            pass
-    if "/rec" in msg or "recommend" in msg:
-        actions.append({"type": "RECOMMEND"})
-        say += "I’ll refresh your recommendations."
-    return jsonify({"message": say, "actions": actions})
+    """
+    Returns a plan + optional embedded recommendations so the Chat tab
+    can render inline “card bubbles”, while the Recs tab stays in sync.
+    """
+    data = request.get_json(silent=True) or {}
+    msg = data.get("message", "")
+    profile = data.get("profile", {}) or {}
+
+    plan = make_plan(msg, profile)
+
+    # If the plan tells us to recommend, run the same logic as /api/recommend and attach.
+    items = []
+    for act in plan.get("actions", []):
+        if act.get("type") == "UPDATE_PROFILE":
+            patch = act.get("patch", {})
+            profile.update(patch)
+        if act.get("type") == "RECOMMEND":
+            items = _run_recommend(profile)
+
+    # Harmonize shape for the frontend
+    return jsonify({
+        "topic": plan.get("topic", "MOTO_DOMAIN"),
+        "actions": plan.get("actions", []),
+        "message": plan.get("message") or "Updating your preferences and refreshing recommendations.",
+        "chat_reply": plan.get("chat_reply") or plan.get("message") or "Okay! I’ve updated your preferences.",
+        "items": items,                 # inline recs for chat bubbles
+        "profile": profile              # merged profile after actions
+    })
+
+@app.route("/healthz")
+def healthz():
+    limits = {
+        "recommend": "30/minute;300/day",
+        "images": "60/minute;600/day",
+        "chat": "12/minute;120/day",
+        "default_daily": "200/day",
+    }
+    ok = os.path.exists(os.path.join("data", "bikes.json"))
+    return jsonify({
+        "ok": ok,
+        "bikes_json": ok,
+        "limits": limits,
+        "openai_enabled": os.getenv("RR_OPENAI_ENABLED", "false").lower() == "true"
+    })
 
 if __name__ == "__main__":
-    # Ensure folders exist
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (STATIC_DIR / "stock_images").mkdir(parents=True, exist_ok=True)
     app.run(debug=True)
