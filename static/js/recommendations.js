@@ -74,6 +74,36 @@
     return `Top speed — ${top} mph • 0–60 — ${zero} s`;
   }
 
+  // --- Live operation status (in the header area) ---
+function ensureStatusNode() {
+  // Try to place it next to the hint line; fall back to meta
+  let host = document.querySelector('#chatHint') || document.querySelector('#meta');
+  if (!host) host = document.querySelector('.container') || document.body;
+
+  let el = document.getElementById('opStatus');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'opStatus';
+    el.style.cssText = `
+      font-size:.92rem; color:var(--muted); margin:.35rem 0;
+      display:flex; align-items:center; gap:.4rem;
+    `;
+    host.insertAdjacentElement('afterend', el);
+  }
+  return el;
+}
+
+function setOpStatus(text, kind='idle') {
+  const el = ensureStatusNode();
+  // Simple badges by state
+  const badge =
+    kind === 'working' ? `<span style="display:inline-block;width:.6rem;height:.6rem;border-radius:50%;background:var(--link);"></span>`
+    : kind === 'ok'     ? `<span style="display:inline-block;width:.6rem;height:.6rem;border-radius:50%;background:#22c55e;"></span>`
+    : kind === 'error'  ? `<span style="display:inline-block;width:.6rem;height:.6rem;border-radius:50%;background:#ef4444;"></span>`
+    : `<span style="display:inline-block;width:.6rem;height:.6rem;border-radius:50%;background:#9ca3af;"></span>`;
+  el.innerHTML = `${badge} <span>${esc(text)}</span>`;
+}
+
   function card(item) {
     const div = document.createElement('div');
     div.className = 'card';
@@ -82,7 +112,7 @@
     const officialLinkId = `off_${(item.id || item.name).replace(/[^a-z0-9_]/gi, '')}_${Math.random().toString(36).slice(2)}`;
     div.innerHTML = `
       <div style="height:160px; background:#f5f5f5;">
-        <img src="${esc(item.image_url || '/static/motorcyle_ride.jpg')}" alt="${esc(item.name)}"
+        <img src="${esc(item.image_url || '/static/motorcycle_ride.jpg')}" alt="${esc(item.name)}"
              style="width:100%; height:160px; object-fit:cover; display:block;">
       </div>
       <div class="section-pad" style="display:grid; gap:.35rem;">
@@ -264,6 +294,8 @@
       if (hasNoAbs) openAbs();
     }
     hasRunOnce = true;
+
+    return snap.items;
   }
 
   // --------- Chat (plan-based) ---------
@@ -304,11 +336,25 @@
             recNeeded = true;
           }
         }
+
+        setOpStatus('Re-running recommendations…', 'working');
+        let items = [];
+        try {
+          items = await runAndSave();            // this refreshes the Rec tab + history
+          setOpStatus('Done. New snapshot added at the top.', 'ok');
+        } catch (e) {
+          console.error('[RR] runAndSave threw', e);
+          setOpStatus('Failed to refresh recommendations.', 'error');
+        }
         if (recNeeded) {
-          addBubble('Re-running recommendations…', 'bot');
-          await runAndSave();
-          addBubble('Done. New snapshot added at the top.', 'bot');
-          // Stay on Chat; user can flip tabs manually
+          const items = await runAndSave();          // <- MUST return items
+          
+          // NEW: echo top 2 items as compact chat cards
+          if (items && items.length) {
+            await addCardBubbles(items.slice(0, 2));
+          } else {
+            addBubble('No matches for those settings—try loosening budget or seat height.', 'bot');
+          }
         }
       }
     } catch {
@@ -358,6 +404,57 @@
     updateMeta();
   });
 
+  // Render 1–2 compact recommendation cards inside the chat stream
+  async function addCardBubbles(items) {
+    if (!items || !items.length || !chatBody) return;
+
+    // Cap to 2 cards as per product spec
+    const toShow = items.slice(0, 2);
+
+    for (const it of toShow) {
+      // pick an image using your existing helper
+      const img = await chooseImage(it);
+
+      // minimal summary line
+      const subline = [
+        it.manufacturer || '',
+        it.category ? `• ${it.category}` : ''
+      ].filter(Boolean).join(' ');
+
+      // Optional bullets (keep it light; avoid long text walls)
+      const bullets = [];
+      if (it.top_speed_mph) bullets.push(`Top speed — ${it.top_speed_mph} mph`);
+      if (it.zero_to_sixty_s) bullets.push(`0–60 — ${it.zero_to_sixty_s} s`);
+
+      const bulletsHTML = bullets.length
+        ? `<ul style="margin:.4rem 0 0 1rem;padding:0;line-height:1.35;">
+            ${bullets.map(b => `<li>${esc(b)}</li>`).join('')}
+          </ul>`
+        : '';
+
+      // Build the compact “card bubble”
+      const div = document.createElement('div');
+      div.className = 'bubble bot';
+      div.style.padding = '0';  // tighter look for a card
+      div.innerHTML = `
+        <div class="card" style="display:flex; gap:.75rem; align-items:center; padding:.65rem .7rem;">
+          <img src="${esc(img)}" alt="" style="width:88px;height:62px;object-fit:cover;border-radius:8px;border:1px solid var(--border);" />
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(it.name || it.label || 'Motorcycle')}</div>
+            <div style="color:var(--muted); font-size:.92rem;">${esc(subline)}</div>
+            ${bulletsHTML}
+            ${it.official_url ? `
+              <div style="margin-top:.4rem;">
+                <a href="${esc(it.official_url)}" target="_blank" rel="noopener" class="btn btn-outline" style="padding:.35rem .65rem; font-size:.9rem;">Official Site</a>
+              </div>` : ``}
+          </div>
+        </div>
+      `;
+
+      chatBody.appendChild(div);
+      chatBody.scrollTop = chatBody.scrollHeight;
+    }
+  }
   // --------- Init
   (async function init() {
     writeJSON('rr.profile', profile);
@@ -372,3 +469,4 @@
     switchTab('recs');
   })();
 })();
+
