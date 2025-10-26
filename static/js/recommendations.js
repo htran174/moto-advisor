@@ -2,6 +2,10 @@
 (function () {
   console.log('[RideReady] recommendations.js loaded');
 
+  // Transient chat-driven overrides (used for one run, then cleared)
+  let overridePins = null;        // array of catalog ids
+  let overrideExternals = null;   // array of external items (no id)
+
   // --------- State (session) ---------
   let profile = readJSON('rr.profile') || {
     experience: 'no_experience', height_cm: 170, budget_usd: 6000,
@@ -198,18 +202,25 @@ function setOpStatus(text, kind='idle') {
   }
 
   // --------- API calls ---------
-  async function callRecommend() {
-    setSkeletons(profile.k || 3);
-    const res = await fetch('/api/recommend', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(profile)
-    });
-    if (!res.ok) {
-      if (visibleList) visibleList.innerHTML = '<p class="subtitle">Error fetching recommendations.</p>';
-      return [];
-    }
-    const data = await res.json();
-    return data.items || [];
+  async function callRecommend(pins, externals) {
+  setSkeletons(profile.k || 2);
+
+  const payload = { ...profile };
+  if (Array.isArray(pins) && pins.length) payload.pin_ids = pins;
+  if (Array.isArray(externals) && externals.length) payload.external_items = externals;
+
+  const res = await fetch('/api/recommend', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) {
+    setOpStatus('Failed to refresh recommendations.', 'error');
+    if (visibleList) visibleList.innerHTML = '<p class="subtitle">Network error.</p>';
+    throw new Error('recommend API failed');
+}
+  const data = await res.json();
+  return data.items || [];
   }
 
   async function chooseImage(item) {
@@ -226,9 +237,9 @@ function setOpStatus(text, kind='idle') {
         })
       });
       const j = await r.json();
-      return (j.images && j.images[0] && j.images[0].url) || '/static/motorcyle_ride.jpg';
+      return (j.images && j.images[0] && j.images[0].url) || '/static/motorcycle_ride.jpg';
     } catch {
-      return '/static/motorcyle_ride.jpg';
+      return '/static/motorcycle_ride.jpg';
     }
   }
 
@@ -279,24 +290,33 @@ function setOpStatus(text, kind='idle') {
   }
 
   async function runAndSave() {
-    const raw = await callRecommend();
-    const initial = preferStyleCommon(raw);
-    const snap = await createSnapshotFrom(initial);
-    history.unshift(snap);
-    history = history.slice(0, 10);
-    writeJSON('rr.history', history);
-    renderVisibleFromHistory();
-    renderTimeline();
-    updateMeta();
+  // Use overrides (from latest chat turn) exactly once
+  const pins = overridePins;
+  const externals = overrideExternals;
+  overridePins = null;
+  overrideExternals = null;
 
-    if (!sessionStorage.getItem('rr.absWarned')) {
-      const hasNoAbs = (snap.items || []).some(it => it.abs === false);
-      if (hasNoAbs) openAbs();
-    }
-    hasRunOnce = true;
+  // show progress in the header
+  setOpStatus('Re-running recommendations…', 'working');
 
-    return snap.items;
+  const items = await callRecommend(pins, externals);
+
+  // ⬇⬇ important: await the snapshot creation
+  const snap = await createSnapshotFrom(items);
+  hasRunOnce = true;
+
+  history.unshift(snap);
+  writeJSON('rr.history', history);
+
+  // refresh UI
+  renderVisibleFromHistory();
+  renderTimeline();
+  updateMeta();
+
+  setOpStatus('Done. New snapshot added at the top.', 'ok');
+  return snap.items;          // chat uses this to show the same two cards
   }
+
 
   // --------- Chat (plan-based) ---------
   function addBubble(text, who) {
@@ -310,57 +330,84 @@ function setOpStatus(text, kind='idle') {
 
   chatForm && chatForm.addEventListener('submit', async (e) => {
     e.preventDefault();
+
     const text = (chatInput && chatInput.value || '').trim();
     if (!text) return;
+
+    // show user's message
     addBubble(text, 'user');
     if (chatInput) chatInput.value = '';
 
     try {
+      // call backend NLU
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text, profile })
       });
+
+      if (!res.ok) {
+        addBubble('Network error. Please try again.', 'bot');
+        setOpStatus('Failed to refresh recommendations.', 'error');
+        return;
+      }
+
       const plan = await res.json();
+
+      // optional bot text
       if (plan.message) addBubble(plan.message, 'bot');
 
-      // Apply actions
-      if (Array.isArray(plan.actions)) {
-        let recNeeded = false;
-        for (const act of plan.actions) {
-          if (act.type === 'UPDATE_PROFILE' && act.patch) {
-            profile = { ...profile, ...act.patch };
-            writeJSON('rr.profile', profile);
-            updateMeta();
-          } else if (act.type === 'RECOMMEND') {
-            recNeeded = true;
-          }
-        }
+      // reset one-shot overrides
+      overridePins = null;
+      overrideExternals = null;
 
-        setOpStatus('Re-running recommendations…', 'working');
-        let items = [];
-        try {
-          items = await runAndSave();            // this refreshes the Rec tab + history
-          setOpStatus('Done. New snapshot added at the top.', 'ok');
-        } catch (e) {
-          console.error('[RR] runAndSave threw', e);
-          setOpStatus('Failed to refresh recommendations.', 'error');
-        }
-        if (recNeeded) {
-          const items = await runAndSave();          // <- MUST return items
-          
-          // NEW: echo top 2 items as compact chat cards
-          if (items && items.length) {
-            await addCardBubbles(items.slice(0, 2));
-          } else {
-            addBubble('No matches for those settings—try loosening budget or seat height.', 'bot');
+      const actions = Array.isArray(plan.actions) ? plan.actions : [];
+
+      // apply actions from the plan
+      for (const act of actions) {
+        if (act.type === 'UPDATE_PROFILE' && act.patch) {
+          profile = { ...profile, ...act.patch };
+          writeJSON('rr.profile', profile);
+          updateMeta();
+        } else if (act.type === 'RECOMMEND') {
+          // capture one-shot overrides, if present
+          if (Array.isArray(act.pin_ids) && act.pin_ids.length) {
+            overridePins = act.pin_ids.slice(0);
+          }
+          if (Array.isArray(act.items) && act.items.length) {
+            // only keep true externals (no local id)
+            const ext = act.items.filter(x => !(x && x.id));
+            overrideExternals = ext.length ? ext : null;
           }
         }
       }
-    } catch {
+
+      // decide if we should refresh recs (only once)
+      const shouldRefresh = actions.some(a => a.type === 'RECOMMEND' || a.type === 'UPDATE_PROFILE');
+
+      if (shouldRefresh) {
+        let itemsFromRun = [];
+        try {
+          itemsFromRun = await runAndSave();                 // updates Rec tab + timeline + status line
+        } catch (err) {
+          console.error('[RR] runAndSave failed', err);
+          setOpStatus('Failed to refresh recommendations.', 'error');
+          return;
+        }
+
+        // echo the top-2 from the snapshot into chat as compact cards
+        try {
+          await addCardBubbles((itemsFromRun || []).slice(0, 2));
+        } catch { /* no-op */ }
+      }
+
+    } catch (err) {
+      console.error('[RR] chat error', err);
       addBubble('Network error. Please try again.', 'bot');
+      setOpStatus('Failed to refresh recommendations.', 'error');
     }
   });
+
 
   // --------- Tabs
   function switchTab(which) {
