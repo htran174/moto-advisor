@@ -363,27 +363,81 @@ function setOpStatus(text, kind='idle') {
 
       const actions = Array.isArray(plan.actions) ? plan.actions : [];
 
-      // apply actions from the plan
+      // Helper: normalize a single-bike RECOMMEND action into an external item
+      const toExternal = (act) => {
+        // Pull from either flat fields or nested "details"
+        const d = act.details || {};
+        const brand = act.brand || act.manufacturer || d.brand || d.manufacturer || '';
+        const model = act.model || act.name || d.model || d.name || 'Motorcycle';
+        const category = act.category || d.category || act.type_hint || 'sportbike';
+
+        // best-effort ints
+        const toInt = (v) => {
+          if (v == null) return undefined;
+          const n = Number(String(v).replace(/[^\d.]/g, ''));
+          return Number.isFinite(n) ? n : undefined;
+        };
+
+        const engine_cc = toInt(act.engine_cc ?? d.engine_cc);
+        const top_speed_mph = toInt(act.top_speed_mph ?? d.top_speed_mph);
+        const zero_to_sixty_s = Number(d.zero_to_sixty_s ?? act.zero_to_sixty_s);
+
+        // description → reasons[0] (our backend is happy with either)
+        const desc = act.description || act.notes || d.description || d.notes || '';
+        const official_url = act.official_url || d.official_url || '';
+        const image_query = act.image_query || d.image_query || [brand, model].filter(Boolean).join(' ');
+
+        return {
+          // no id → treated as external
+          name: model,
+          manufacturer: brand,
+          category,
+          engine_cc,
+          top_speed_mph,
+          zero_to_sixty_s,
+          reasons: desc ? [desc] : [],
+          description: desc,   // also keep it for chat card text
+          official_url,
+          image_query
+        };
+      };
+
+      // Apply actions from the plan
+      const externals = [];
       for (const act of actions) {
         if (act.type === 'UPDATE_PROFILE' && act.patch) {
           profile = { ...profile, ...act.patch };
           writeJSON('rr.profile', profile);
           updateMeta();
         } else if (act.type === 'RECOMMEND') {
-          // capture one-shot overrides, if present
-          if (Array.isArray(act.pin_ids) && act.pin_ids.length) {
-            overridePins = act.pin_ids.slice(0);
-          }
+          // Case A: the model returned a list of items at once
           if (Array.isArray(act.items) && act.items.length) {
-            // only keep true externals (no local id)
-            const ext = act.items.filter(x => !(x && x.id));
-            overrideExternals = ext.length ? ext : null;
+            // keep only true externals (no local id)
+            const extList = act.items
+              .filter(x => !(x && x.id))
+              .map(x => toExternal(x)); // also normalize shape
+            externals.push(...extList);
+          }
+          // Case B: the model returned a single bike per action
+          else if (act.model || (act.details && (act.details.model || act.details.name))) {
+            externals.push(toExternal(act));
+          }
+          // Optional: pinned local ids (if the model ever sends them)
+          if (Array.isArray(act.pin_ids) && act.pin_ids.length) {
+            overridePins = (overridePins || []).concat(act.pin_ids);
           }
         }
       }
 
-      // decide if we should refresh recs (only once)
-      const shouldRefresh = actions.some(a => a.type === 'RECOMMEND' || a.type === 'UPDATE_PROFILE');
+      // Commit the externals as a one-shot override for the next run
+      if (externals.length) {
+        overrideExternals = externals;
+      }
+
+      // Decide if we should refresh recs (only once)
+      const shouldRefresh = actions.some(a =>
+        a.type === 'RECOMMEND' || a.type === 'UPDATE_PROFILE'
+      );
 
       if (shouldRefresh) {
         let itemsFromRun = [];
