@@ -220,23 +220,34 @@ def api_images():
 @limiter.limit("12/minute;120/day")
 def api_chat():
     data = request.get_json(silent=True) or {}
-    msg = data.get("message", "") or ""
+    msg = data.get("message", "")
     profile = data.get("profile", {}) or {}
-
     plan = make_plan(msg, profile)
 
     # apply actions + (optionally) run recommendations now so the client can
     # display immediate cards while the Rec tab stays in sync.
-    items = []
+    
     pin_ids = []
     external_items = []
-
+    items = []
     # ensure description text from plan is kept
     for act in plan.get("actions", []):
-        if act.get("type") == "RECOMMEND":
-            desc = act.get("description") or act.get("notes")
-            if desc:
-                external_items.append({"name": act.get("model"), "description": desc})
+        if act.get("type") == "UPDATE_PROFILE":
+            patch = act.get("patch", {}) or {}
+            profile.update(patch)
+
+        elif act.get("type") == "RECOMMEND":
+            # If OpenAI provided model names directly (new logic)
+            model_name = act.get("model")
+            if model_name:
+                external_items.append({
+                    "name": model_name,
+                    "description": act.get("description", "Suggested by AI."),
+                    "image_query": model_name,
+                })
+            else:
+                # Fall back to the standard local filtering logic
+                items = _run_recommend(profile)
 
     if pin_ids or external_items:
         items = _run_recommend(profile, pin_ids=pin_ids, external_items=external_items)
@@ -246,9 +257,10 @@ def api_chat():
     # harmonize shape for the frontend
     return jsonify({
         "topic": plan.get("topic", "MOTO_DOMAIN"),
-        "message": plan.get("message", ""),
         "actions": plan.get("actions", []),
-        "items": items  # optional embed for immediate chat cards
+        "items": items,
+        "external_items": external_items,
+        "message": plan.get("message", "")
     })
 
 
