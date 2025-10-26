@@ -231,16 +231,12 @@ def api_chat():
     pin_ids = []
     external_items = []
 
+    # ensure description text from plan is kept
     for act in plan.get("actions", []):
-        if act.get("type") == "UPDATE_PROFILE":
-            patch = act.get("patch", {}) or {}
-            profile.update(patch)
-        elif act.get("type") == "RECOMMEND":
-            # collect overrides if the model provided them
-            pin_ids = act.get("pin_ids") or []
-            # keep only non-catalog entries in items (those without id)
-            raw_items = act.get("items") or []
-            external_items = [x for x in raw_items if not isinstance(x, dict) or not x.get("id")]
+        if act.get("type") == "RECOMMEND":
+            desc = act.get("description") or act.get("notes")
+            if desc:
+                external_items.append({"name": act.get("model"), "description": desc})
 
     if pin_ids or external_items:
         items = _run_recommend(profile, pin_ids=pin_ids, external_items=external_items)
