@@ -455,53 +455,50 @@ function setOpStatus(text, kind='idle') {
   async function addCardBubbles(items) {
     if (!items || !items.length || !chatBody) return;
 
-    // Cap to 2 cards as per product spec
     const toShow = items.slice(0, 2);
 
     for (const it of toShow) {
-      // pick an image using your existing helper
       const img = await chooseImage(it);
-
-      // minimal summary line
       const subline = [
         it.manufacturer || '',
         it.category ? `• ${it.category}` : ''
       ].filter(Boolean).join(' ');
 
-      // Optional bullets (keep it light; avoid long text walls)
-      const bullets = [];
-      if (it.top_speed_mph) bullets.push(`Top speed — ${it.top_speed_mph} mph`);
-      if (it.zero_to_sixty_s) bullets.push(`0–60 — ${it.zero_to_sixty_s} s`);
+      // Pull the descriptive text if we have it
+      const desc = it.description || it.notes || it.reasons?.[0] || '';
 
-      const bulletsHTML = bullets.length
-        ? `<ul style="margin:.4rem 0 0 1rem;padding:0;line-height:1.35;">
-            ${bullets.map(b => `<li>${esc(b)}</li>`).join('')}
-          </ul>`
+      // Simple performance line
+      const perf = [];
+      if (it.top_speed_mph) perf.push(`Top speed — ${it.top_speed_mph} mph`);
+      if (it.zero_to_sixty_s) perf.push(`0–60 — ${it.zero_to_sixty_s} s`);
+      const perfHTML = perf.length
+        ? `<div style="font-size:.9rem;color:var(--muted);margin-top:.25rem;">${esc(perf.join(' • '))}</div>`
         : '';
 
-      // Build the compact “card bubble”
       const div = document.createElement('div');
       div.className = 'bubble bot';
-      div.style.padding = '0';  // tighter look for a card
+      div.style.padding = '0';
       div.innerHTML = `
-        <div class="card" style="display:flex; gap:.75rem; align-items:center; padding:.65rem .7rem;">
+        <div class="card" style="display:flex;gap:.75rem;align-items:center;padding:.65rem .7rem;">
           <img src="${esc(img)}" alt="" style="width:88px;height:62px;object-fit:cover;border-radius:8px;border:1px solid var(--border);" />
-          <div style="flex:1; min-width:0;">
-            <div style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(it.name || it.label || 'Motorcycle')}</div>
-            <div style="color:var(--muted); font-size:.92rem;">${esc(subline)}</div>
-            ${bulletsHTML}
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(it.name || it.label || 'Motorcycle')}</div>
+            <div style="color:var(--muted);font-size:.92rem;">${esc(subline)}</div>
+            ${desc ? `<div style="margin-top:.35rem;font-size:.9rem;line-height:1.35;">${esc(desc)}</div>` : ''}
+            ${perfHTML}
             ${it.official_url ? `
               <div style="margin-top:.4rem;">
-                <a href="${esc(it.official_url)}" target="_blank" rel="noopener" class="btn btn-outline" style="padding:.35rem .65rem; font-size:.9rem;">Official Site</a>
+                <a href="${esc(it.official_url)}" target="_blank" rel="noopener"
+                  class="btn btn-outline" style="padding:.35rem .65rem;font-size:.9rem;">Official Site</a>
               </div>` : ``}
           </div>
         </div>
       `;
-
       chatBody.appendChild(div);
       chatBody.scrollTop = chatBody.scrollHeight;
     }
   }
+
   // --------- Init
   (async function init() {
     writeJSON('rr.profile', profile);
