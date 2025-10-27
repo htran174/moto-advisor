@@ -37,146 +37,37 @@ def _to_float(v):
             return None
     return None
 
-def _coerce_actions(actions: Any) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    if not isinstance(actions, list):
-        return out
-    for a in actions:
-        if not isinstance(a, dict):
-            continue
-        t = (a.get("type") or a.get("action") or "").upper()
-        if t != "RECOMMEND":
-            # Only one action type for now
-            continue
-
-        # Accept both "details" and top-level fields
-        d = a.get("details") if isinstance(a.get("details"), dict) else {}
-
-        # Promote / normalize fields
-        brand = a.get("brand") or d.get("brand")
-        model = a.get("model") or d.get("model")
-        engine_cc = _to_int(a.get("engine_cc") or d.get("engine_cc"))
-        top_speed_mph = _to_int(a.get("top_speed_mph") or d.get("top_speed_mph"))
-        zero_to_sixty_s = _to_float(a.get("zero_to_sixty_s") or d.get("zero_to_sixty_s"))
-
-        notes = (
-            a.get("notes")
-            or a.get("description")
-            or d.get("notes")
-            or d.get("description")
-            or ""
-        )
-
-        official_url = a.get("official_url") or d.get("official_url") or ""
-        image_query = a.get("image_query") or d.get("image_query") or ""
-
-        # Build normalized action
-        out.append({
-            "type": "RECOMMEND",
-            "brand": brand,
-            "model": model,
-            "engine_cc": engine_cc,
-            "top_speed_mph": top_speed_mph,
-            "zero_to_sixty_s": zero_to_sixty_s,
-            "official_url": official_url,
-            "image_query": image_query,
-            "notes": notes
-        })
-    return out
-
-def _brief_actions_for_log(actions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    brief = []
-    for a in actions:
-        brief.append({
-            "type": a.get("type"),
-            "model": a.get("model"),
-            "top_speed_mph": a.get("top_speed_mph"),
-            "zero_to_sixty_s": a.get("zero_to_sixty_s"),
-        })
-    return brief
-
-def _pair_alternative(rec):
+def _pair_alternative(act: dict, bikes: list[dict]) -> dict:
     """
-    If the model only returns one bike, suggest a sensible second one.
-    Very small heuristic map for 500-ish cc sportbikes.
+    If the model's recommended 'model' exists in local bikes.json,
+    use the local bike data instead of the OpenAI-provided info.
+    Otherwise, keep the original.
     """
-    model = (rec.get("model") or "").lower()
-    if "ninja 500" in model or "ninja 500r" in model or "versys" in model:
-        return {
-            "type": "RECOMMEND",
-            "brand": "Honda",
-            "model": "CBR500R",
-            "category": "sportbike",
-            "max_speed_mph": 112,
-            "zero_to_sixty_s": 5.6,
-            "official_url": "https://powersports.honda.com/motorcycle/sport/cbr500r",
-            "image_query": "Honda CBR500R"
-        }
-    if "cbr500" in model:
-        return {
-            "type": "RECOMMEND",
-            "brand": "Kawasaki",
-            "model": "Ninja 500R",
-            "category": "sportbike",
-            "max_speed_mph": 120,
-            "zero_to_sixty_s": 5.0,
-            "official_url": "https://www.kawasaki.com/en-us/motorcycle/ninja/ninja-500r",
-            "image_query": "Kawasaki Ninja 500R"
-        }
-    if "rc 390" in model or "rc390" in model:
-        return {
-            "type": "RECOMMEND",
-            "brand": "Yamaha",
-            "model": "YZF-R3",
-            "category": "sportbike",
-            "max_speed_mph": 112,
-            "zero_to_sixty_s": 5.6,
-            "official_url": "https://www.yamahamotorsports.com/supersport/models/yzf-r3",
-            "image_query": "Yamaha YZF-R3"
-        }
-    # generic fallback pair
-    return {
-        "type": "RECOMMEND",
-        "brand": "Honda",
-        "model": "CBR500R",
-        "category": "sportbike",
-        "max_speed_mph": 112,
-        "zero_to_sixty_s": 5.6,
-        "official_url": "https://powersports.honda.com/motorcycle/sport/cbr500r",
-        "image_query": "Honda CBR500R"
-    }
+    if not act or act.get("type") != "RECOMMEND":
+        return act
 
-# ------------------------------------------------------------
-# Prompt
-# ------------------------------------------------------------
+    model_name = act.get("model", "").strip().lower()
+    if not model_name:
+        return act
 
-SYSTEM_PROMPT = """You are a planner that returns STRICT JSON for motorcycle recommendations.
+    # Check if model exists in local bikes.json
+    for bike in bikes:
+        if bike.get("model", "").strip().lower() == model_name:
+            # Found a match — use local data instead of OpenAI’s
+            merged = dict(act)
+            merged.update({
+                "brand": bike.get("brand", merged.get("brand")),
+                "model": bike.get("model", merged.get("model")),
+                "category": bike.get("category", merged.get("category")),
+                "top_speed_mph": bike.get("max_speed_mph", merged.get("top_speed_mph")),
+                "zero_to_sixty_s": bike.get("zero_to_sixty_s", merged.get("zero_to_sixty_s")),
+                "official_url": bike.get("official_url", merged.get("official_url")),
+                "image_query": f"{bike.get('brand', '')} {bike.get('model', '')}".strip()
+            })
+            return merged
 
-Return a single JSON object with:
-{
-  "topic": "motorcycle_recommendation",
-  "message": "<one-line user-facing summary>",
-  "actions": [
-    {
-      "type": "RECOMMEND",
-      "brand": "<brand name (optional)>",
-      "model": "<model name (required)>",
-      "engine_cc": <number>,                // e.g., 500
-      "max_speed_mph": <number>,            // e.g., 112
-      "zero_to_sixty_s": <number>,          // e.g., 5.2
-      "official_url": "<url or empty string>",
-      "image_query": "<brand and model or useful query>",
-      "notes": "<short helpful note>"
-    }
-  ]
-}
-
-Rules:
-- Output MUST be valid JSON only; no explanations.
-- Populate numeric fields with best-known approximate values (integers for mph; decimals OK for 0–60).
-- Prefer common/current model names; if unsure, pick the nearest commonly known spec.
-- Keep "message" short and friendly (one sentence).
-"""
+    # No local match — return original
+    return act
 
 # ------------------------------------------------------------
 # Public API
@@ -188,7 +79,7 @@ def make_plan(user_msg: str, profile: dict, logger=None, client=None, model_name
     Also returns `external_items` (max 2) normalized for the recommender.
     """
     system = (
-        "You are a planning assistant for a motorcycle recommender.\n"
+        "You are a planning assistant for a beginner motorcycle recommender.\n"
         "Respond ONLY with a strict JSON object having keys: topic, message, actions.\n"
         "If the user asks for or implies a recommendation, actions MUST contain EXACTLY TWO\n"
         "items with this shape (no more, no less):\n"
@@ -196,7 +87,8 @@ def make_plan(user_msg: str, profile: dict, logger=None, client=None, model_name
         '\"max_speed_mph\": <int>, \"zero_to_sixty_s\": <float>,'
         '\"official_url\":\"...\",\"image_query\":\"<brand and model or useful query>\"}\n'
         "Use numbers (not strings) for speeds/accel. If only one speed is known, set max_speed_mph.\n"
-        "Prefer common, real models that a US rider can buy. Keep message short and helpful."
+        "Prefer common brands unless asked, real models that a US rider can buy, always make sure the motorcycle are begainer friendly i.e make sure it at most midrange and never more."
+        "Keep message short and helpful."
     )
 
     user = {
