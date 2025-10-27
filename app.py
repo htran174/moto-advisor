@@ -6,7 +6,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 # Services
-from services.nlu import make_plan
+from services.chat_nlu import make_plan
 from services.images import get_image_results
 from services.recommend_rules import load_bikes, apply_filters, pick_reasons
 
@@ -219,50 +219,38 @@ def api_images():
 @app.route("/api/chat", methods=["POST"])
 @limiter.limit("12/minute;120/day")
 def api_chat():
+    """
+    Returns a plan + optional embedded recommendations so the Chat tab
+    can render inline “card bubbles,” while the Recs tab stays in sync.
+    """
     data = request.get_json(silent=True) or {}
-    msg = data.get("message", "")
-    profile = data.get("profile", {}) or {}
-    plan = make_plan(msg, profile)
+    msg = data.get("message", "") or ""
+    profile = data.get("profile") or {}
 
-    # apply actions + (optionally) run recommendations now so the client can
-    # display immediate cards while the Rec tab stays in sync.
-    
+    # Plan with OpenAI (now includes external_items + logs)
+    plan = make_plan(msg, profile, logger=app.logger)
+
     pin_ids = []
-    external_items = []
-    items = []
-    # ensure description text from plan is kept
+    external_items = plan.get("external_items") or []
+
+    # apply updates and collect any pin ids (if you use them)
     for act in plan.get("actions", []):
         if act.get("type") == "UPDATE_PROFILE":
-            patch = act.get("patch", {}) or {}
-            profile.update(patch)
-
+            profile.update(act.get("patch", {}) or {})
         elif act.get("type") == "RECOMMEND":
-            # If OpenAI provided model names directly (new logic)
-            model_name = act.get("model")
-            if model_name:
-                external_items.append({
-                    "name": model_name,
-                    "description": act.get("description", "Suggested by AI."),
-                    "image_query": model_name,
-                })
-            else:
-                # Fall back to the standard local filtering logic
-                items = _run_recommend(profile)
+            pin_ids.extend(act.get("pin_ids") or [])
 
-    if pin_ids or external_items:
-        items = _run_recommend(profile, pin_ids=pin_ids, external_items=external_items)
-    elif any(a.get("type") == "RECOMMEND" for a in plan.get("actions", [])):
-        items = _run_recommend(profile)
+    # One recommend run that honors any temp overrides
+    items = _run_recommend(profile, pin_ids=pin_ids, external_items=external_items)
 
-    # harmonize shape for the frontend
+    # Harmonize shape for the frontend
     return jsonify({
-        "topic": plan.get("topic", "MOTO_DOMAIN"),
+        "topic": plan.get("topic", "motorcycle_recommendation"),
+        "message": plan.get("message", ""),
         "actions": plan.get("actions", []),
-        "items": items,
-        "external_items": external_items,
-        "message": plan.get("message", "")
+        "items": items,              # inline list for chat card bubbles
+        "profile": profile,          # updated snapshot
     })
-
 
 @app.route("/healthz")
 def healthz():
