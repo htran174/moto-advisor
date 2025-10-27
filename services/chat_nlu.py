@@ -75,20 +75,36 @@ def _pair_alternative(act: dict, bikes: list[dict]) -> dict:
 
 def make_plan(user_msg: str, profile: dict, logger=None, client=None, model_name: str = "gpt-4o-mini") -> dict:
     """
-    Produce a strict JSON plan with exactly TWO RECOMMEND actions when recommending bikes.
-    Also returns `external_items` (max 2) normalized for the recommender.
+    Produce a strict JSON plan with up to TWO RECOMMEND actions when recommending bikes.
+    Each RECOMMEND action now includes a short 'description' suitable to render
+    beneath the corresponding card.
+
+    Returns:
+      {
+        topic: str,
+        message: str,
+        actions: [ ... UPDATE_PROFILE and RECOMMEND ... ],
+        external_items: [ {normalized for recommender} ]
+      }
     """
     system = (
         "You are a planning assistant for a beginner motorcycle recommender.\n"
-        "Respond ONLY with a strict JSON object having keys: topic, message, actions.\n"
-        "If the user asks for or implies a recommendation, actions MUST contain EXACTLY TWO\n"
-        "items with this shape (no more, no less):\n"
-        '{\"type\":\"RECOMMEND\",\"brand\":\"...\",\"model\":\"...\",\"category\":\"sportbike\",'
-        '\"max_speed_mph\": <int>, \"zero_to_sixty_s\": <float>,'
-        '\"official_url\":\"...\",\"image_query\":\"<brand and model or useful query>\"}\n'
-        "Use numbers (not strings) for speeds/accel. If only one speed is known, set max_speed_mph.\n"
-        "Prefer common brands unless asked, real models that a US rider can buy, always make sure the motorcycle are begainer friendly i.e make sure it at most midrange and never more."
-        "Keep message short and helpful."
+        "Respond ONLY with a strict JSON object with keys: topic, message, actions.\n"
+        "If the user asks for or implies a recommendation, actions MUST contain two items unless user ask differently\n"
+        "with this exact shape (numeric where applicable):\n"
+        "{"
+        "\"type\":\"RECOMMEND\","
+        "\"brand\":\"...\","
+        "\"model\":\"...\","
+        "\"category\":\"sportbike\","
+        "\"max_speed_mph\": <int or null>,"
+        "\"zero_to_sixty_s\": <float or null>,"
+        "\"official_url\":\"...\","
+        "\"image_query\":\"<brand and model or useful query>\","
+        "\"description\":\"<=35 words, neutral, beginner-suitable, what it’s like to own/ride\""
+        "}\n"
+        "Use *real, current* models a US rider can buy. Be honest about beginner suitability.\n"
+        "Keep 'message' concise and helpful. Do not include extra keys."
     )
 
     user = {
@@ -102,24 +118,33 @@ def make_plan(user_msg: str, profile: dict, logger=None, client=None, model_name
     if logger:
         logger.info("[NLU] Calling OpenAI model=%s | msg=%r", model_name, user_msg)
 
+    # Lazily create client the same way you already do elsewhere.
     if client is None and OpenAI is not None:
         client = OpenAI()
 
     raw_text = ""
     try:
+        # Keep the same API style you were using to avoid any compatibility issues.
         resp = client.responses.create(
             model=model_name,
             input=[{"role": "system", "content": system}, user],
             temperature=0.2,
             max_output_tokens=400,
-            # response_format={"type": "json_object"},  # enable if your SDK supports it
+            # If your SDK supports it reliably, you can enable JSON mode:
+            # response_format={"type": "json_object"},
         )
         raw_text = resp.output_text
     except Exception as e:
         if logger:
             logger.exception("NLU call failed: %s", e)
-        return {"topic": "fallback", "message": "Sorry—something went wrong.", "actions": [], "external_items": []}
+        return {
+            "topic": "fallback",
+            "message": "Sorry—something went wrong.",
+            "actions": [],
+            "external_items": [],
+        }
 
+    # --- tolerant JSON parsing (unchanged in spirit) ---
     def _parse_json(s: str):
         s = (s or "").strip()
         try:
@@ -134,67 +159,67 @@ def make_plan(user_msg: str, profile: dict, logger=None, client=None, model_name
                 pass
         return None
 
-    data = _parse_json(raw_text) or {"topic": "motorcycle_recommendation", "message": user_msg, "actions": []}
+    data = _parse_json(raw_text) or {
+        "topic": "motorcycle_recommendation",
+        "message": user_msg,
+        "actions": [],
+    }
 
     actions = data.get("actions") or []
     if isinstance(actions, dict):
         actions = [actions]
     actions = [a for a in actions if isinstance(a, dict)]
 
+    # Partition
     ups = [a for a in actions if a.get("type") == "UPDATE_PROFILE"]
     recs = [a for a in actions if a.get("type") == "RECOMMEND"]
 
-    # --- ENFORCE exactly two recommendations ---
-    if len(recs) == 1:
-        recs.append(_pair_alternative(recs[0]))
-    elif len(recs) == 0:
-        # generic two if the model whiffs completely
-        recs = [
-            {
-                "type": "RECOMMEND",
-                "brand": "Kawasaki",
-                "model": "Ninja 500R",
-                "category": "sportbike",
-                "max_speed_mph": 120,
-                "zero_to_sixty_s": 5.0,
-                "official_url": "https://www.kawasaki.com/en-us/motorcycle/ninja/ninja-500r",
-                "image_query": "Kawasaki Ninja 500R",
-            },
-            _pair_alternative({"model": "Ninja 500R"})
-        ]
-    else:
+    # --- enforce up to two recs, with duplicate if exactly one; allow zero ---
+    if len(recs) >= 2:
         recs = recs[:2]
+    elif len(recs) == 1:
+        recs = [recs[0], dict(recs[0])]
+    else:
+        recs = []  # OK to return zero (no hardcoded fallback)
 
-    # normalize and build external items
-    external_items = []
+    # --- normalize and build external_items (leave external_items shape unchanged) ---
     norm_recs = []
+    external_items = []
+
     for act in recs:
         brand = (act.get("brand") or "").strip()
         model = (act.get("model") or "").strip()
         category = (act.get("category") or "sportbike").strip()
 
+        # Keep your existing numeric coercion helpers (present elsewhere in this file)
         speed = _to_int(act.get("max_speed_mph"))
         zero_to_sixty = _to_float(act.get("zero_to_sixty_s"))
+
         official_url = (act.get("official_url") or "").strip() or None
         image_query = (act.get("image_query") or f"{brand} {model}".strip()) or None
+
+        # NEW: capture description (short, neutral, beginner-relevant)
+        description = (act.get("description") or "").strip() or None
 
         norm = {
             "type": "RECOMMEND",
             "brand": brand or None,
-            "model": model,
+            "model": model or None,
             "category": category or None,
             "max_speed_mph": speed,
             "zero_to_sixty_s": zero_to_sixty,
             "official_url": official_url,
             "image_query": image_query,
+            "description": description,  # <— keep on the action for UI to render
         }
         norm_recs.append(norm)
 
+        # Leave external_items exactly as your card/recommender expects
         external_items.append({
             "brand": norm["brand"],
             "model": norm["model"],
             "category": norm["category"],
-            "top_speed_mph": speed,     # keep both keys happy downstream
+            "top_speed_mph": speed,
             "max_speed_mph": speed,
             "zero_to_sixty_s": zero_to_sixty,
             "official_url": official_url,
@@ -205,6 +230,16 @@ def make_plan(user_msg: str, profile: dict, logger=None, client=None, model_name
     data["external_items"] = external_items
 
     if logger:
-        logger.info("[NLU] Plan -> %s", data)
+        # Keep the log readable while showing that descriptions were captured
+        brief = []
+        for a in norm_recs:
+            brief.append({
+                "brand": a.get("brand"),
+                "model": a.get("model"),
+                "max_speed_mph": a.get("max_speed_mph"),
+                "zero_to_sixty_s": a.get("zero_to_sixty_s"),
+                "has_description": bool(a.get("description")),
+            })
+        logger.info("[NLU] Plan -> topic=%s | msg=%s | recs=%s", data.get("topic"), data.get("message"), brief)
 
     return data
