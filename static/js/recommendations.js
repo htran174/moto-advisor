@@ -81,23 +81,6 @@
   const zero = (item.zero_to_sixty_s != null) ? item.zero_to_sixty_s : '-';
   return `Top speed — ${top} mph • 0–60 — ${zero} s`;
 }
-  function getTopSpeedMph(item) {
-  const n =
-    item?.top_speed_mph ??
-    item?.max_speed_mph ??
-    item?.specs?.top_speed_mph ??
-    item?.specs?.max_speed_mph;
-  const v = Number(n);
-  return Number.isFinite(v) ? Math.round(v) : null;
-}
-
-function getZeroToSixty(item) {
-  const z =
-    item?.zero_to_sixty_s ??
-    item?.specs?.zero_to_sixty_s;
-  const v = Number(z);
-  return Number.isFinite(v) ? Number(v.toFixed(1)) : null;
-}
 
   // --- Live operation status (in the header area) ---
 function ensureStatusNode() {
