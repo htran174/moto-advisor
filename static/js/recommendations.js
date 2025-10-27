@@ -72,11 +72,32 @@
       visibleList.appendChild(sk);
     }
   }
+
   function perfLine(item) {
-    const top = (item.max_speed_mph != null) ? item.max_speed_mph : '-';
-    const zero = (item.zero_to_sixty_s != null) ? item.zero_to_sixty_s : '-';
-    return `Top speed — ${top} mph • 0–60 — ${zero} s`;
-  }
+  // prefer max_speed_mph but gracefully fallback to top_speed_mph
+  const top = (item.max_speed_mph != null) ? item.max_speed_mph
+             : (item.top_speed_mph != null) ? item.top_speed_mph
+             : '-';
+  const zero = (item.zero_to_sixty_s != null) ? item.zero_to_sixty_s : '-';
+  return `Top speed — ${top} mph • 0–60 — ${zero} s`;
+}
+  function getTopSpeedMph(item) {
+  const n =
+    item?.top_speed_mph ??
+    item?.max_speed_mph ??
+    item?.specs?.top_speed_mph ??
+    item?.specs?.max_speed_mph;
+  const v = Number(n);
+  return Number.isFinite(v) ? Math.round(v) : null;
+}
+
+function getZeroToSixty(item) {
+  const z =
+    item?.zero_to_sixty_s ??
+    item?.specs?.zero_to_sixty_s;
+  const v = Number(z);
+  return Number.isFinite(v) ? Number(v.toFixed(1)) : null;
+}
 
   // --- Live operation status (in the header area) ---
 function ensureStatusNode() {
@@ -244,32 +265,37 @@ function setOpStatus(text, kind='idle') {
   }
 
   async function createSnapshotFrom(items) {
-    const enriched = [];
-    for (const it of items) {
-      const image_url = await chooseImage(it);
-      enriched.push({
-        id: it.id || it.name,
-        name: it.name,
-        manufacturer: it.manufacturer,
-        category: it.category,
-        engine_cc: it.engine_cc,
-        seat_height_mm: it.seat_height_mm,
-        wet_weight_kg: it.wet_weight_kg,
-        abs: it.abs,
-        max_speed_mph: it.max_speed_mph,
-        zero_to_sixty_s: it.zero_to_sixty_s,
-        reasons: it.reasons || [],
-        official_url: it.official_url,
-        mfr_domain: it.mfr_domain,
-        image_url
-      });
-    }
-    return {
-      id: 'rr-run-' + Date.now(),
-      created_at: nowISO(),
-      profile_used: { ...profile },
-      items: enriched
-    };
+  const enriched = [];
+  for (const it of items) {
+    const image_url = await chooseImage(it);
+    const top = (it.max_speed_mph != null) ? it.max_speed_mph
+              : (it.top_speed_mph != null) ? it.top_speed_mph
+              : undefined;
+
+    enriched.push({
+      id: it.id || it.name,
+      name: it.name,
+      manufacturer: it.manufacturer,
+      category: it.category,
+      engine_cc: it.engine_cc,
+      seat_height_mm: it.seat_height_mm,
+      wet_weight_kg: it.wet_weight_kg,
+      abs: it.abs,
+      max_speed_mph: top,                // <- ensure it’s populated
+      top_speed_mph: it.top_speed_mph,   // keep the raw too
+      zero_to_sixty_s: it.zero_to_sixty_s,
+      reasons: it.reasons || [],
+      official_url: it.official_url,
+      mfr_domain: it.mfr_domain,
+      image_url
+    });
+  }
+  return {
+    id: 'rr-run-' + Date.now(),
+    created_at: nowISO(),
+    profile_used: { ...profile },
+    items: enriched
+  };
   }
 
   function preferStyleCommon(items) {
@@ -371,7 +397,6 @@ function setOpStatus(text, kind='idle') {
         const model = act.model || act.name || d.model || d.name || 'Motorcycle';
         const category = act.category || d.category || act.type_hint || 'sportbike';
 
-        // best-effort ints
         const toInt = (v) => {
           if (v == null) return undefined;
           const n = Number(String(v).replace(/[^\d.]/g, ''));
@@ -379,28 +404,35 @@ function setOpStatus(text, kind='idle') {
         };
 
         const engine_cc = toInt(act.engine_cc ?? d.engine_cc);
-        const top_speed_mph = toInt(act.top_speed_mph ?? d.top_speed_mph);
+
+        // prefer max_speed_mph; fall back to top_speed_mph; write BOTH
+        const max_speed_mph =
+          toInt(act.max_speed_mph ?? d.max_speed_mph ?? act.top_speed_mph ?? d.top_speed_mph);
+        const top_speed_mph =
+          toInt(act.top_speed_mph ?? d.top_speed_mph ?? act.max_speed_mph ?? d.max_speed_mph);
+
         const zero_to_sixty_s = Number(d.zero_to_sixty_s ?? act.zero_to_sixty_s);
 
-        // description → reasons[0] (our backend is happy with either)
         const desc = act.description || act.notes || d.description || d.notes || '';
         const official_url = act.official_url || d.official_url || '';
         const image_query = act.image_query || d.image_query || [brand, model].filter(Boolean).join(' ');
 
         return {
-          // no id → treated as external
+          // no id → treated as external by backend
           name: model,
           manufacturer: brand,
           category,
           engine_cc,
-          top_speed_mph,
+          max_speed_mph,          // <- main field our cards/timeline expect
+          top_speed_mph,          // <- also keep a copy for chat bubbles/fallbacks
           zero_to_sixty_s,
           reasons: desc ? [desc] : [],
-          description: desc,   // also keep it for chat card text
+          description: desc,      // used as blurb in chat card
           official_url,
           image_query
         };
       };
+
 
       // Apply actions from the plan
       const externals = [];
@@ -505,54 +537,58 @@ function setOpStatus(text, kind='idle') {
     updateMeta();
   });
 
-  // Render 1–2 compact recommendation cards inside the chat stream
-  async function addCardBubbles(items) {
-    if (!items || !items.length || !chatBody) return;
+ async function addCardBubbles(items) {
+  if (!items || !items.length || !chatBody) return;
 
-    const toShow = items.slice(0, 2);
+  const toShow = items.slice(0, 2);
 
-    for (const it of toShow) {
-      const img = await chooseImage(it);
-      const subline = [
-        it.manufacturer || '',
-        it.category ? `• ${it.category}` : ''
-      ].filter(Boolean).join(' ');
+  for (const it of toShow) {
+    const img = await chooseImage(it);
 
-      // Pull the descriptive text if we have it
-      const desc = it.description || it.notes || it.reasons?.[0] || '';
+    const subline = [
+      it.manufacturer || '',
+      it.category ? `• ${it.category}` : ''
+    ].filter(Boolean).join(' ');
 
-      // Simple performance line
-      const perf = [];
-      if (it.top_speed_mph) perf.push(`Top speed — ${it.top_speed_mph} mph`);
-      if (it.zero_to_sixty_s) perf.push(`0–60 — ${it.zero_to_sixty_s} s`);
-      const perfHTML = perf.length
-        ? `<div style="font-size:.9rem;color:var(--muted);margin-top:.25rem;">${esc(perf.join(' • '))}</div>`
-        : '';
+    const desc = it.description || it.notes || (it.reasons && it.reasons[0]) || '';
 
-      const div = document.createElement('div');
-      div.className = 'bubble bot';
-      div.style.padding = '0';
-      div.innerHTML = `
-        <div class="card" style="display:flex;gap:.75rem;align-items:center;padding:.65rem .7rem;">
-          <img src="${esc(img)}" alt="" style="width:88px;height:62px;object-fit:cover;border-radius:8px;border:1px solid var(--border);" />
-          <div style="flex:1;min-width:0;">
-            <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(it.name || it.label || 'Motorcycle')}</div>
-            <div style="color:var(--muted);font-size:.92rem;">${esc(subline)}</div>
-            ${desc ? `<div style="margin-top:.35rem;font-size:.9rem;line-height:1.35;">${esc(desc)}</div>` : ''}
-            ${perfHTML}
-            ${it.official_url ? `
-              <div style="margin-top:.4rem;">
-                <a href="${esc(it.official_url)}" target="_blank" rel="noopener"
-                  class="btn btn-outline" style="padding:.35rem .65rem;font-size:.9rem;">Official Site</a>
-              </div>` : ``}
+    // prefer max_speed_mph but accept top_speed_mph
+    const top = (it.max_speed_mph != null) ? it.max_speed_mph
+              : (it.top_speed_mph != null) ? it.top_speed_mph
+              : null;
+
+    const perf = [];
+    if (top != null) perf.push(`Top speed — ${top} mph`);
+    if (it.zero_to_sixty_s != null) perf.push(`0–60 — ${it.zero_to_sixty_s} s`);
+    const perfHTML = perf.length
+      ? `<div style="font-size:.9rem;color:var(--muted);margin-top:.25rem;">${esc(perf.join(' • '))}</div>`
+      : '';
+
+    const div = document.createElement('div');
+    div.className = 'bubble bot';
+    div.style.padding = '0';
+    div.innerHTML = `
+      <div class="card" style="display:flex;gap:.75rem;align-items:center;padding:.65rem .7rem;">
+        <img src="${esc(img)}" alt="" style="width:88px;height:62px;object-fit:cover;border-radius:8px;border:1px solid var(--border);" />
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            ${esc(it.name || it.label || 'Motorcycle')}
           </div>
+          <div style="color:var(--muted);font-size:.92rem;">${esc(subline)}</div>
+          ${desc ? `<div style="margin-top:.35rem;font-size:.9rem;line-height:1.35;">${esc(desc)}</div>` : ''}
+          ${perfHTML}
+          ${it.official_url ? `
+            <div style="margin-top:.4rem;">
+              <a href="${esc(it.official_url)}" target="_blank" rel="noopener"
+                class="btn btn-outline" style="padding:.35rem .65rem;font-size:.9rem;">Official Site</a>
+            </div>` : ``}
         </div>
-      `;
-      chatBody.appendChild(div);
-      chatBody.scrollTop = chatBody.scrollHeight;
-    }
+      </div>
+    `;
+    chatBody.appendChild(div);
+    chatBody.scrollTop = chatBody.scrollHeight;
   }
-
+}
   // --------- Init
   (async function init() {
     writeJSON('rr.profile', profile);
