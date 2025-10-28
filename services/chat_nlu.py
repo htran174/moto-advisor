@@ -104,6 +104,9 @@ def make_plan(user_msg: str, profile: dict, logger=None, client=None, model_name
         "\"description\":\"<=35 words, neutral, beginner-suitable, what it’s like to own/ride\""
         "}\n"
         "Use *real, current* models a US rider can buy. Be honest about beginner suitability.\n"
+        "Recommend bikes should be around the begainer level, and midsize bike should only be recommended if user want somthing stornger but should make it clear in the description.\n"
+        "Try to recommend common models that most US buyer can buy 2nd hand, unless user ask otherwise.\n"
+        "If user ask anything not related to motorcycle, please respond with 'Please only ask about motorcycle'\n"
         "Keep 'message' concise and helpful. Do not include extra keys."
     )
 
