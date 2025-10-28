@@ -250,7 +250,10 @@ function setOpStatus(text, kind='idle') {
   async function createSnapshotFrom(items) {
   const enriched = [];
   for (const it of items) {
+    // pick an image now so the chat bubble can use the same one
     const image_url = await chooseImage(it);
+
+    // prefer max_speed_mph but keep the original top_speed_mph too
     const top = (it.max_speed_mph != null) ? it.max_speed_mph
               : (it.top_speed_mph != null) ? it.top_speed_mph
               : undefined;
@@ -264,10 +267,19 @@ function setOpStatus(text, kind='idle') {
       seat_height_mm: it.seat_height_mm,
       wet_weight_kg: it.wet_weight_kg,
       abs: it.abs,
-      max_speed_mph: top,                // <- ensure it’s populated
-      top_speed_mph: it.top_speed_mph,   // keep the raw too
+
+      // keep both for UI/chat formatting
+      max_speed_mph: top,
+      top_speed_mph: it.top_speed_mph,
+
       zero_to_sixty_s: it.zero_to_sixty_s,
+
+      // ✅ persist the description coming from the plan so chat can show it
+      description: it.description || it.notes || null,
+
+      // keep reasons too as a fallback
       reasons: it.reasons || [],
+
       official_url: it.official_url,
       mfr_domain: it.mfr_domain,
       image_url
@@ -279,7 +291,8 @@ function setOpStatus(text, kind='idle') {
     profile_used: { ...profile },
     items: enriched
   };
-  }
+}
+
 
   function preferStyleCommon(items) {
     if (hasRunOnce) return items;
@@ -337,148 +350,159 @@ function setOpStatus(text, kind='idle') {
     chatBody.scrollTop = chatBody.scrollHeight;
   }
 
-  chatForm && chatForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
+function postPlanDescriptions(externals) {
+  if (!externals || !externals.length || !chatBody) return;
+  // show at most the first two, to match the UI cards
+  externals.slice(0, 2).forEach((x) => {
+    const name = x.name || 'Motorcycle';
+    const blurb = x.description || (Array.isArray(x.reasons) && x.reasons[0]) || '';
+    if (blurb) addBubble(`${name}: ${blurb}`, 'bot');
+  });
+}
 
-    const text = (chatInput && chatInput.value || '').trim();
-    if (!text) return;
+chatForm && chatForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
 
-    // show user's message
-    addBubble(text, 'user');
-    if (chatInput) chatInput.value = '';
+  const text = (chatInput && chatInput.value || '').trim();
+  if (!text) return;
 
-    try {
-      // call backend NLU
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, profile })
-      });
+  // show user's message
+  addBubble(text, 'user');
+  if (chatInput) chatInput.value = '';
 
-      if (!res.ok) {
-        addBubble('Network error. Please try again.', 'bot');
+  try {
+    // call backend NLU
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, profile })
+    });
+
+    if (!res.ok) {
+      addBubble('Network error. Please try again.', 'bot');
+      setOpStatus('Failed to refresh recommendations.', 'error');
+      return;
+    }
+
+    const plan = await res.json();
+
+    // optional bot text
+    if (plan.message) addBubble(plan.message, 'bot');
+
+    // reset one-shot overrides
+    overridePins = null;
+    overrideExternals = null;
+
+    const actions = Array.isArray(plan.actions) ? plan.actions : [];
+
+    // helper to normalize a single action into an external
+    const toExternal = (act) => {
+      const d = act.details || {};
+      const brand = act.brand || act.manufacturer || d.brand || d.manufacturer || '';
+      const model = act.model || act.name || d.model || d.name || 'Motorcycle';
+      const category = act.category || d.category || act.type_hint || 'sportbike';
+      const toInt = (v) => {
+        if (v == null) return undefined;
+        const n = Number(String(v).replace(/[^\d.]/g, ''));
+        return Number.isFinite(n) ? n : undefined;
+      };
+      const engine_cc       = toInt(act.engine_cc ?? d.engine_cc);
+      const max_speed_mph   = toInt(act.max_speed_mph ?? d.max_speed_mph ?? act.top_speed_mph ?? d.top_speed_mph);
+      const top_speed_mph   = toInt(act.top_speed_mph ?? d.top_speed_mph ?? act.max_speed_mph ?? d.max_speed_mph);
+      const zero_to_sixty_s = Number(d.zero_to_sixty_s ?? act.zero_to_sixty_s);
+      const desc            = act.description || act.notes || d.description || d.notes || '';
+      const official_url    = act.official_url || d.official_url || '';
+      const image_query     = act.image_query || d.image_query || [brand, model].filter(Boolean).join(' ');
+      return {
+        name: model,
+        manufacturer: brand,
+        category,
+        engine_cc,
+        max_speed_mph,
+        top_speed_mph,
+        zero_to_sixty_s,
+        reasons: desc ? [desc] : [],
+        description: desc,
+        official_url,
+        image_query
+      };
+    };
+
+    // Apply actions from the plan
+    const externals = [];
+    for (const act of actions) {
+      if (act.type === 'UPDATE_PROFILE' && act.patch) {
+        profile = { ...profile, ...act.patch };
+        writeJSON('rr.profile', profile);
+        updateMeta();
+      } else if (act.type === 'RECOMMEND') {
+        if (Array.isArray(act.items) && act.items.length) {
+          const extList = act.items
+            .filter(x => !(x && x.id))
+            .map(x => toExternal(x));
+          externals.push(...extList);
+        } else if (act.model || (act.details && (act.details.model || act.details.name))) {
+          externals.push(toExternal(act));
+        }
+        if (Array.isArray(act.pin_ids) && act.pin_ids.length) {
+          overridePins = (overridePins || []).concat(act.pin_ids);
+        }
+      }
+    }
+
+    if (externals.length) {
+      // one-shot for the next /api/recommend run
+      overrideExternals = externals;
+    }
+
+    const shouldRefresh = actions.some(a =>
+      a.type === 'RECOMMEND' || a.type === 'UPDATE_PROFILE'
+    );
+
+    if (shouldRefresh) {
+      let itemsFromRun = [];
+      try {
+        itemsFromRun = await runAndSave(); // updates cards/timeline/status
+      } catch (err) {
+        console.error('[RR] runAndSave failed', err);
         setOpStatus('Failed to refresh recommendations.', 'error');
         return;
       }
 
-      const plan = await res.json();
+      // --- sequential: CARD -> DESC, then CARD -> DESC ---
+      const topTwo = (itemsFromRun || []).slice(0, 2);
 
-      // optional bot text
-      if (plan.message) addBubble(plan.message, 'bot');
-
-      // reset one-shot overrides
-      overridePins = null;
-      overrideExternals = null;
-
-      const actions = Array.isArray(plan.actions) ? plan.actions : [];
-
-      // Helper: normalize a single-bike RECOMMEND action into an external item
-      const toExternal = (act) => {
-        // Pull from either flat fields or nested "details"
-        const d = act.details || {};
-        const brand = act.brand || act.manufacturer || d.brand || d.manufacturer || '';
-        const model = act.model || act.name || d.model || d.name || 'Motorcycle';
-        const category = act.category || d.category || act.type_hint || 'sportbike';
-
-        const toInt = (v) => {
-          if (v == null) return undefined;
-          const n = Number(String(v).replace(/[^\d.]/g, ''));
-          return Number.isFinite(n) ? n : undefined;
-        };
-
-        const engine_cc = toInt(act.engine_cc ?? d.engine_cc);
-
-        // prefer max_speed_mph; fall back to top_speed_mph; write BOTH
-        const max_speed_mph =
-          toInt(act.max_speed_mph ?? d.max_speed_mph ?? act.top_speed_mph ?? d.top_speed_mph);
-        const top_speed_mph =
-          toInt(act.top_speed_mph ?? d.top_speed_mph ?? act.max_speed_mph ?? d.max_speed_mph);
-
-        const zero_to_sixty_s = Number(d.zero_to_sixty_s ?? act.zero_to_sixty_s);
-
-        const desc = act.description || act.notes || d.description || d.notes || '';
-        const official_url = act.official_url || d.official_url || '';
-        const image_query = act.image_query || d.image_query || [brand, model].filter(Boolean).join(' ');
-
-        return {
-          // no id → treated as external by backend
-          name: model,
-          manufacturer: brand,
-          category,
-          engine_cc,
-          max_speed_mph,          // <- main field our cards/timeline expect
-          top_speed_mph,          // <- also keep a copy for chat bubbles/fallbacks
-          zero_to_sixty_s,
-          reasons: desc ? [desc] : [],
-          description: desc,      // used as blurb in chat card
-          official_url,
-          image_query
-        };
-      };
-
-
-      // Apply actions from the plan
-      const externals = [];
-      for (const act of actions) {
-        if (act.type === 'UPDATE_PROFILE' && act.patch) {
-          profile = { ...profile, ...act.patch };
-          writeJSON('rr.profile', profile);
-          updateMeta();
-        } else if (act.type === 'RECOMMEND') {
-          // Case A: the model returned a list of items at once
-          if (Array.isArray(act.items) && act.items.length) {
-            // keep only true externals (no local id)
-            const extList = act.items
-              .filter(x => !(x && x.id))
-              .map(x => toExternal(x)); // also normalize shape
-            externals.push(...extList);
-          }
-          // Case B: the model returned a single bike per action
-          else if (act.model || (act.details && (act.details.model || act.details.name))) {
-            externals.push(toExternal(act));
-          }
-          // Optional: pinned local ids (if the model ever sends them)
-          if (Array.isArray(act.pin_ids) && act.pin_ids.length) {
-            overridePins = (overridePins || []).concat(act.pin_ids);
-          }
-        }
-      }
-
-      // Commit the externals as a one-shot override for the next run
-      if (externals.length) {
-        overrideExternals = externals;
-      }
-
-      // Decide if we should refresh recs (only once)
-      const shouldRefresh = actions.some(a =>
-        a.type === 'RECOMMEND' || a.type === 'UPDATE_PROFILE'
+      // quick matcher brand+model (case-insensitive) to pull desc from externals if needed
+      const key = (m, n) => `${(m || '').toLowerCase()}|${(n || '').toLowerCase()}`;
+      const extMap = new Map(
+        (externals || []).slice(0, 2).map(x => [key(x.manufacturer, x.name), x])
       );
 
-      if (shouldRefresh) {
-        let itemsFromRun = [];
-        try {
-          itemsFromRun = await runAndSave();                 // updates Rec tab + timeline + status line
-        } catch (err) {
-          console.error('[RR] runAndSave failed', err);
-          setOpStatus('Failed to refresh recommendations.', 'error');
-          return;
-        }
+      const pickBlurb = (item) => {
+        const primary = item.description || (Array.isArray(item.reasons) && item.reasons[0]) || '';
+        if (primary) return primary;
+        const k = key(item.manufacturer, item.name);
+        const ext = extMap.get(k);
+        if (!ext) return '';
+        return ext.description || (Array.isArray(ext.reasons) && ext.reasons[0]) || '';
+      };
 
-        // echo the top-2 from the snapshot into chat as compact cards
-        try {
-          await addCardBubbles((itemsFromRun || []).slice(0, 2));
-        } catch { /* no-op */ }
+      // render one at a time for guaranteed order
+      for (const it of topTwo) {
+        await addCardBubbles([it]); // existing renderer accepts an array
+        const blurb = pickBlurb(it);
+        if (blurb) addBubble(`${it.name || 'Motorcycle'}: ${blurb}`, 'bot');
       }
-
-    } catch (err) {
-      console.error('[RR] chat error', err);
-      addBubble('Network error. Please try again.', 'bot');
-      setOpStatus('Failed to refresh recommendations.', 'error');
     }
-  });
 
+  } catch (err) {
+    console.error('[RR] chat error', err);
+    addBubble('Network error. Please try again.', 'bot');
+    setOpStatus('Failed to refresh recommendations.', 'error');
+  }
+});
 
-  // --------- Tabs
+// --------- Tabs
   function switchTab(which) {
     if (!panelRecs || !panelChat || !tabRecs || !tabChat) return;
     const recs = which === 'recs';
@@ -572,6 +596,24 @@ function setOpStatus(text, kind='idle') {
     chatBody.scrollTop = chatBody.scrollHeight;
   }
 }
+
+async function addDescBubbles(items) {
+  if (!items || !items.length || !chatBody) return;
+  const two = items.slice(0, 2);
+  for (const it of two) {
+    const name = it.name || it.label || 'Motorcycle';
+    const blurb =
+      it.description ||
+      it.notes ||
+      (Array.isArray(it.reasons) && it.reasons.length ? it.reasons[0] : '') ||
+      '';
+    if (blurb) {
+      // Reuse your existing addBubble so style + timestamp match your chat UI
+      addBubble(`${name}: ${blurb}`, 'bot');
+    }
+  }
+}
+
   // --------- Init
   (async function init() {
     writeJSON('rr.profile', profile);
