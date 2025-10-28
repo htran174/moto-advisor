@@ -75,66 +75,57 @@ def _pair_alternative(act: dict, bikes: list[dict]) -> dict:
 
 def make_plan(user_msg: str, profile: dict, logger=None, client=None, model_name: str = "gpt-4o-mini") -> dict:
     """
-    Produce a strict JSON plan with up to TWO RECOMMEND actions when recommending bikes.
-    Each RECOMMEND action now includes a short 'description' suitable to render
-    beneath the corresponding card.
-
-    Returns:
-      {
-        topic: str,
-        message: str,
-        actions: [ ... UPDATE_PROFILE and RECOMMEND ... ],
-        external_items: [ {normalized for recommender} ]
-      }
+    Produce a strict JSON plan with exactly TWO RECOMMEND actions when recommending bikes.
+    Also returns `external_items` (max 2) normalized for the recommender.
+    Incorporates user profile context (height, budget, bike_types) when provided.
     """
+
     system = (
-        "You are a planning assistant for a beginner motorcycle recommender.\n"
-        "Respond ONLY with a strict JSON object with keys: topic, message, actions.\n"
-        "If the user asks for or implies a recommendation, actions MUST contain two items unless user ask differently\n"
-        "with this exact shape (numeric where applicable):\n"
+        "You are an expert motorcycle recommendation assistant helping beginner riders.\n"
+        "You always consider the user's provided profile data if available: height (cm), budget (USD), and preferred bike types.\n"
+        "If height is provided, avoid recommending bikes too tall for shorter riders (<170 cm).\n"
+        "If budget is provided, recommend bikes within or near that range (do not exceed it by much).\n"
+        "If bike types are provided, prioritize those categories first. Unless user ask for a different categorie.\n"
+        "If a field is blank or missing, simply ignore it (do not make assumptions).\n\n"
+        "You must respond ONLY with a strict JSON object having keys: topic, message, actions.\n"
+        "When recommending, always include exactly TWO RECOMMEND actions with fields:\n"
         "{"
         "\"type\":\"RECOMMEND\","
         "\"brand\":\"...\","
         "\"model\":\"...\","
         "\"category\":\"sportbike\","
-        "\"max_speed_mph\": <int or null>,"
-        "\"zero_to_sixty_s\": <float or null>,"
+        "\"max_speed_mph\":<int>,"
+        "\"zero_to_sixty_s\":<float>,"
         "\"official_url\":\"...\","
-        "\"image_query\":\"<brand and model or useful query>\","
-        "\"description\":\"<=35 words, neutral, beginner-suitable, what it’s like to own/ride\""
+        "\"image_query\":\"<brand and model>\","
+        "\"description\":\"<short one-sentence summary of why it fits the user profile>\""
         "}\n"
-        "Use *real, current* models a US rider can buy. Be honest about beginner suitability.\n"
-        "Recommend bikes should be around the begainer level, and midsize bike should only be recommended if user want somthing stornger but should make it clear in the description.\n"
-        "Try to recommend common models that most US buyer can buy 2nd hand, unless user ask otherwise.\n"
-        "If user ask anything not related to motorcycle, please respond with 'Please only ask about motorcycle'\n"
-        "Keep 'message' concise and helpful. Do not include extra keys."
+        "Use numbers (not strings) for speeds/acceleration. Keep your message concise and informative.\n"
+        "If user messesge isn't about motorcycle respond with 'Please only ask about motorcycle'.\n"
+        "Unless user ask otherwise try to recommend common models that most US buyer can buy 2nd hand.\n"
     )
 
     user = {
         "role": "user",
         "content": (
             f"User message: {user_msg}\n\n"
-            f"Current profile (may be empty): {json.dumps(profile, ensure_ascii=False)}"
+            f"User profile (may be partially empty): {json.dumps(profile, ensure_ascii=False, indent=2)}"
         ),
     }
 
     if logger:
         logger.info("[NLU] Calling OpenAI model=%s | msg=%r", model_name, user_msg)
 
-    # Lazily create client the same way you already do elsewhere.
     if client is None and OpenAI is not None:
         client = OpenAI()
 
     raw_text = ""
     try:
-        # Keep the same API style you were using to avoid any compatibility issues.
         resp = client.responses.create(
             model=model_name,
             input=[{"role": "system", "content": system}, user],
             temperature=0.2,
             max_output_tokens=400,
-            # If your SDK supports it reliably, you can enable JSON mode:
-            # response_format={"type": "json_object"},
         )
         raw_text = resp.output_text
     except Exception as e:
@@ -147,7 +138,7 @@ def make_plan(user_msg: str, profile: dict, logger=None, client=None, model_name
             "external_items": [],
         }
 
-    # --- tolerant JSON parsing (unchanged in spirit) ---
+    # --- JSON parsing helper ---
     def _parse_json(s: str):
         s = (s or "").strip()
         try:
@@ -173,76 +164,58 @@ def make_plan(user_msg: str, profile: dict, logger=None, client=None, model_name
         actions = [actions]
     actions = [a for a in actions if isinstance(a, dict)]
 
-    # Partition
     ups = [a for a in actions if a.get("type") == "UPDATE_PROFILE"]
     recs = [a for a in actions if a.get("type") == "RECOMMEND"]
 
-    # --- enforce up to two recs, with duplicate if exactly one; allow zero ---
+    # --- Enforce exactly two RECOMMEND actions ---
     if len(recs) >= 2:
         recs = recs[:2]
     elif len(recs) == 1:
-        recs = [recs[0], dict(recs[0])]
+        recs = [recs[0], dict(recs[0])]  # duplicate single rec
     else:
-        recs = []  # OK to return zero (no hardcoded fallback)
+        recs = []  # allow empty (chat will still respond textually)
 
-    # --- normalize and build external_items (leave external_items shape unchanged) ---
-    norm_recs = []
+    # --- Normalize and build external items ---
     external_items = []
-
+    norm_recs = []
     for act in recs:
         brand = (act.get("brand") or "").strip()
         model = (act.get("model") or "").strip()
         category = (act.get("category") or "sportbike").strip()
-
-        # Keep your existing numeric coercion helpers (present elsewhere in this file)
         speed = _to_int(act.get("max_speed_mph"))
         zero_to_sixty = _to_float(act.get("zero_to_sixty_s"))
-
         official_url = (act.get("official_url") or "").strip() or None
         image_query = (act.get("image_query") or f"{brand} {model}".strip()) or None
-
-        # NEW: capture description (short, neutral, beginner-relevant)
-        description = (act.get("description") or "").strip() or None
+        desc = (act.get("description") or "").strip()
 
         norm = {
             "type": "RECOMMEND",
             "brand": brand or None,
-            "model": model or None,
+            "model": model,
             "category": category or None,
             "max_speed_mph": speed,
             "zero_to_sixty_s": zero_to_sixty,
             "official_url": official_url,
             "image_query": image_query,
-            "description": description,  # <— keep on the action for UI to render
+            "description": desc,
         }
         norm_recs.append(norm)
-
-        # Leave external_items exactly as your card/recommender expects
         external_items.append({
             "brand": norm["brand"],
             "model": norm["model"],
             "category": norm["category"],
-            "top_speed_mph": speed,
             "max_speed_mph": speed,
+            "top_speed_mph": speed,
             "zero_to_sixty_s": zero_to_sixty,
             "official_url": official_url,
             "image_query": image_query,
+            "description": desc,
         })
 
     data["actions"] = ups + norm_recs
     data["external_items"] = external_items
 
     if logger:
-        # Keep the log readable while showing that descriptions were captured
-        brief = []
-        for a in norm_recs:
-            brief.append({
-                "brand": a.get("brand"),
-                "model": a.get("model"),
-                "max_speed_mph": a.get("max_speed_mph"),
-                "zero_to_sixty_s": a.get("zero_to_sixty_s"),
-                "has_description": bool(a.get("description")),
-            })
-        logger.info("[NLU] Plan -> topic=%s | msg=%s | recs=%s", data.get("topic"), data.get("message"), brief)
+        logger.info("[NLU] Plan -> %s", json.dumps(data, ensure_ascii=False, indent=2))
 
     return data
