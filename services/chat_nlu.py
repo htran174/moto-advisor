@@ -37,38 +37,6 @@ def _to_float(v):
             return None
     return None
 
-def _pair_alternative(act: dict, bikes: list[dict]) -> dict:
-    """
-    If the model's recommended 'model' exists in local bikes.json,
-    use the local bike data instead of the OpenAI-provided info.
-    Otherwise, keep the original.
-    """
-    if not act or act.get("type") != "RECOMMEND":
-        return act
-
-    model_name = act.get("model", "").strip().lower()
-    if not model_name:
-        return act
-
-    # Check if model exists in local bikes.json
-    for bike in bikes:
-        if bike.get("model", "").strip().lower() == model_name:
-            # Found a match — use local data instead of OpenAI’s
-            merged = dict(act)
-            merged.update({
-                "brand": bike.get("brand", merged.get("brand")),
-                "model": bike.get("model", merged.get("model")),
-                "category": bike.get("category", merged.get("category")),
-                "top_speed_mph": bike.get("max_speed_mph", merged.get("top_speed_mph")),
-                "zero_to_sixty_s": bike.get("zero_to_sixty_s", merged.get("zero_to_sixty_s")),
-                "official_url": bike.get("official_url", merged.get("official_url")),
-                "image_query": f"{bike.get('brand', '')} {bike.get('model', '')}".strip()
-            })
-            return merged
-
-    # No local match — return original
-    return act
-
 # ------------------------------------------------------------
 # Public API
 # ------------------------------------------------------------
@@ -86,9 +54,12 @@ def make_plan(user_msg: str, profile: dict, logger=None, client=None, model_name
         "If height is provided, avoid recommending bikes too tall for shorter riders (<170 cm).\n"
         "If budget is provided, recommend bikes within or near that range (do not exceed it by much).\n"
         "If bike types are provided, prioritize those categories first. Unless user ask for a different categorie.\n"
-        "If a field is blank or missing, simply ignore it (do not make assumptions).\n\n"
+        "If a field is blank or missing, simply ignore it (do not make assumptions).\n"
+        "User will be no experience or little experience, if User is no experience do not recommend bike bigger than midsize bike (i.e at most would be a cbr500)\n"
+        "If User has little experience you can recommend bikes around 500cc range or more when user request to see bigger bikes you can show them bikes under 1000cc, but no supper bikes i.e no 1000cc bike or stronger.\n\n"
         "You must respond ONLY with a strict JSON object having keys: topic, message, actions.\n"
         "When recommending, always include exactly TWO RECOMMEND actions with fields:\n"
+        "The message should always be general and not specfic about any bike leave the specfic for the description.\n"
         "{"
         "\"type\":\"RECOMMEND\","
         "\"brand\":\"...\","
