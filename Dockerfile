@@ -8,28 +8,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System deps (kept minimal)
+# Minimal system deps (kept tiny)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
  && rm -rf /var/lib/apt/lists/*
 
-# Copy only requirements first (better caching)
+# Install Python deps first (layer cache)
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
-# Now copy the rest of your app
+# Copy the app last
 COPY . .
 
-# Flask will listen on 5000
+# Expose Flask port
 EXPOSE 5000
 
-# Tell Flask which file is the entrypoint
-ENV FLASK_APP=app.py
-
-# gunicorn>=22.0.0
-EXPOSE 5000
-
-HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:5000/ || exit 1
-
-CMD ["gunicorn", "-w", "2", "-k", "gthread", "-b", "0.0.0.0:5000", "app:app"]
+# Start with Gunicorn (production-ish)
+# -w 2: two worker processes
+# -k gthread + --threads 4: thread-per-conn; good for I/O-bound Flask apps
+# --timeout 60: avoid zombie workers on slow external calls
+CMD ["gunicorn", "-w", "2", "-k", "gthread", "--threads", "4", "--timeout", "60", "-b", "0.0.0.0:5000", "app:app"]
