@@ -26,6 +26,10 @@ EXPOSE 5000
 # Tell Flask which file is the entrypoint
 ENV FLASK_APP=app.py
 
-# Run with Flask’s built-in server for your first container run
-# (We can switch to gunicorn later if you want.)
-CMD ["python", "-m", "flask", "run", "--host=0.0.0.0", "--port=5000"]
+# gunicorn>=22.0.0
+EXPOSE 5000
+
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:5000/ || exit 1
+
+CMD ["gunicorn", "-w", "2", "-k", "gthread", "-b", "0.0.0.0:5000", "app:app"]
