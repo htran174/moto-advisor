@@ -6,7 +6,7 @@ from flask_limiter.util import get_remote_address
 
 # Services
 from services.chat_nlu import make_plan
-from services.images import get_image_results
+from services.images import resolve_image_url
 from services.recommend_rules import load_bikes, apply_filters, pick_reasons
 
 APP_TITLE = "RideReady"
@@ -212,8 +212,9 @@ def api_recommend():
 @app.route("/api/images", methods=["POST"])
 @limiter.limit("60/minute;600/day")
 def api_images():
-    data = request.get_json(silent=True) or {}
-    return jsonify(get_image_results(data))
+    data = request.get_json(force=True, silent=True) or {}
+    url = resolve_image_url(data)
+    return jsonify({"images": [{"url": url}]})
 
 @app.route("/api/chat", methods=["POST"])
 @limiter.limit("12/minute;120/day")
