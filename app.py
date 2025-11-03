@@ -71,8 +71,7 @@ def _run_recommend(profile: dict,
         else:
             picked = pr
     except Exception as e:
-        # If rules ever fail, fall back to filtered list
-        print(f"[recommend] pick_reasons failed: {e}")
+        # paster first passed
         picked = filtered
 
     picked = [b for b in (picked or []) if isinstance(b, dict)]
