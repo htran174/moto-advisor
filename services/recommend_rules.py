@@ -19,7 +19,6 @@ def load_bikes() -> list[dict]:
     try:
         with open(DATA_PATH, "r", encoding="utf-8") as f:
             bikes = json.load(f)
-        print(f"[recommend] Loaded {len(bikes)} bikes.")
         return bikes
     except Exception as e:
         print(f"[recommend] Could not load bikes.json: {e}")
