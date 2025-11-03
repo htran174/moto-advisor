@@ -211,9 +211,16 @@ def api_recommend():
 @app.route("/api/images", methods=["POST"])
 @limiter.limit("60/minute;600/day")
 def api_images():
-    data = request.get_json(force=True, silent=True) or {}
-    url = resolve_image_url(data)
-    return jsonify({"images": [{"url": url}]})
+    data = request.get_json(silent=True) or {}
+
+    brand = data.get("manufacturer") or data.get("brand") or ""
+    model = data.get("model") or data.get("name") or ""
+    image_query = data.get("image_query") or f"{brand} {model}".strip()
+
+    url = resolve_image_url(brand, model, image_query)
+
+    app.logger.info(f"[images] {brand} {model} -> {url or 'NONE'}")
+    return jsonify({ "url": url })
 
 @app.route("/api/chat", methods=["POST"])
 @limiter.limit("12/minute;120/day")
