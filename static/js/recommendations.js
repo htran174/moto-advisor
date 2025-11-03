@@ -226,25 +226,24 @@ function setOpStatus(text, kind='idle') {
   return data.items || [];
   }
 
-  async function chooseImage(item) {
-    try {
-      const r = await fetch('/api/images', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: item.id,
-          query: `${item.manufacturer} ${item.name}`,
-          limit: 1,
-          mfr_domain: item.mfr_domain,
-          local_image: item.local_image
-        })
-      });
-      const j = await r.json();
-      return (j.images && j.images[0] && j.images[0].url) || '/static/motorcycle_ride.jpg';
-    } catch {
-      return '/static/motorcycle_ride.jpg';
-    }
+ async function chooseImage(it) {
+  try {
+    const res = await fetch('/api/images', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        manufacturer: it.manufacturer || it.brand || '',
+        model: it.name || it.model || '',
+        image_query: it.image_query || `${it.manufacturer || ''} ${it.name || ''}`.trim()
+      })
+    });
+    const data = await res.json();
+    // Use returned URL if present; otherwise use the correct local fallback path:
+    return data.url || '/static/stock_images/motorcycle_ride.jpg';
+  } catch (e) {
+    return '/static/stock_images/motorcycle_ride.jpg';
   }
+}
 
   async function createSnapshotFrom(items) {
   const enriched = [];
