@@ -1,149 +1,140 @@
 # services/images.py
-import os, json, re, time
+from __future__ import annotations
+
+import json
+import re
 from pathlib import Path
-import requests
+from typing import Dict, Iterable, Optional
+from services.images_google import search_first_image
 
-ROOT = Path(__file__).resolve().parents[1]     # project root
-IMAGES_JSON = ROOT / "static" / "images.json"
+# -------------------------------
+# Load images.json once (fast)
+# -------------------------------
 
-USE_GOOGLE_IMAGES = os.getenv("USE_GOOGLE_IMAGES", "false").lower() == "true"
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-GOOGLE_CSE_ID  = os.getenv("GOOGLE_CSE_ID")
-
-# simple in-memory cache for remote lookups
-_CACHE = {}
-
-def _load_map():
-    try:
-        with open(IMAGES_JSON, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
-
-IMG_MAP = _load_map()
-
-def _snake(s: str) -> str:
-    s = (s or "").lower()
-    s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
-    return s
-
-def _norm_key(brand: str, model: str) -> str:
+def _load_images_map() -> Dict[str, str]:
     """
-    Convert (brand, model) into our canonical key style: 'kawasaki_ninja_400'
-    Includes light aliasing so 'MT-03' → 'mt03', 'RC 390' → 'rc_390', etc.
+    Load static/images.json as a dict of {brand_model_key: relative_path}.
+    Example key: 'yamaha_yzfr3' -> 'stock_images/yamaha_r3.jpg'
     """
-    b = _snake(brand)
-    m = _snake(model)
+    here = Path(__file__).resolve()
+    root = here.parent.parent              # project root (folder containing /services and /static)
+    images_json = root / "static" / "images.json"
+    with images_json.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    # normalize keys to lowercase for safety
+    return {str(k).strip().lower(): str(v).strip() for k, v in data.items()}
 
-    # light alias cleanup
-    m = m.replace("mt_03", "mt03").replace("r_3", "r3").replace("rc_390", "rc_390")
-    m = m.replace("cb_300r", "cb300r").replace("sv_650", "sv650").replace("rebel_500", "rebel_500")
+_IMAGES_MAP: Dict[str, str] = _load_images_map()
 
-    key = f"{b}_{m}" if b and m else m or b
-    return key
 
-# Extra alias map for common OpenAI spellings → our canonical keys
-ALIASES = {
-    "yamaha|r7": "yamaha_r7",
-    "yamaha|r3": "yamaha_r3",
-    "kawasaki|ninja_400": "kawasaki_ninja_400",
-    "kawasaki|z_400": "kawasaki_z400",
-    "ktm|rc_390": "ktm_rc_390",
-    "ktm|390_rc": "ktm_rc_390",
-    "ktm|390_duke": "ktm_390_duke",
-    "honda|cbr300": "honda_cbr300",
-    "honda|cb_300r": "honda_cb300r",
-    "honda|rebel_300": "honda_rebel_300",
-}
+# -------------------------------
+# Normalization helpers
+# -------------------------------
 
-def _alias_key(brand: str, model: str) -> str | None:
-    b = _snake(brand)
-    m = _snake(model)
-    pat = f"{b}|{m}"
-    return ALIASES.get(pat)
+_NON_ALNUM = re.compile(r"[^a-z0-9]+", re.IGNORECASE)
 
-def find_local_image(id_: str | None, brand: str | None, model: str | None, local_image: str | None) -> str | None:
-    # 0) explicit path from caller
-    if local_image:
-        return f"/static/stock_images/{local_image.lstrip('/')}"
+def _slug(s: str) -> str:
+    """
+    'YZF-R3' -> 'yzf_r3'
+    'Ninja 400' -> 'ninja_400'
+    """
+    s = (s or "").lower().strip()
+    s = _NON_ALNUM.sub("_", s)
+    s = re.sub(r"_+", "_", s)
+    return s.strip("_")
 
-    # 1) direct id map (catalog path)
-    if id_:
-        path = IMG_MAP.get(id_)
-        if path:
-            return f"/static/{path}"
+def _tight(s: str) -> str:
+    """
+    'YZF-R3' -> 'yzfr3'
+    'Ninja 400' -> 'ninja400'
+    """
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
-    # 2) normalized brand+model
-    if brand or model:
-        k = _norm_key(brand or "", model or "")
-        path = IMG_MAP.get(k)
-        if path:
-            return f"/static/{path}"
+def _dedupe_brand(brand: str) -> str:
+    """
+    Collapse leading duplicate words: 'Yamaha Yamaha' -> 'Yamaha'.
+    Harmless if already clean.
+    """
+    parts = (brand or "").strip().split()
+    if len(parts) >= 2 and parts[0].lower() == parts[1].lower():
+        parts = parts[1:]
+    return " ".join(parts)
 
-        # 3) alias try
-        alias = _alias_key(brand or "", model or "")
-        if alias:
-            path = IMG_MAP.get(alias)
-            if path:
-                return f"/static/{path}"
+def _strip_brand_prefix(model: str, brand: str) -> str:
+    """
+    If model starts with the brand (e.g., 'Yamaha YZF-R3'), strip it → 'YZF-R3'.
+    No-op if there's no prefix.
+    """
+    m = (model or "").strip()
+    b = (brand or "").strip()
+    if not m or not b:
+        return m
+    pattern = r"^" + re.escape(b) + r"[\s\-]+"
+    return re.sub(pattern, "", m, flags=re.IGNORECASE).strip()
 
-    return None
+def _key_candidates(brand: str, model: str) -> Iterable[str]:
+    """
+    Generate candidate keys to look up in images.json.
+    We try a few shapes so we’re robust to hyphens / underscores differences.
+    """
+    brand = _dedupe_brand(brand)
+    model = _strip_brand_prefix(model, brand)
 
-def google_image_search(query: str, mfr_domain: str | None = None) -> str | None:
-    if not USE_GOOGLE_IMAGES or not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
-        return None
+    sb = _slug(brand)     # e.g., 'yamaha'
+    sm = _slug(model)     # e.g., 'yzf_r3'
+    tm = _tight(model)    # e.g., 'yzfr3'
 
-    q = (query or "").strip()
-    if not q:
-        return None
+    # Most specific → least; common patterns first
+    yield f"{sb}_{sm}"    # 'yamaha_yzf_r3'
+    yield f"{sb}_{tm}"    # 'yamaha_yzfr3'
+    # Rare fallbacks (some older maps might have used no underscore)
+    yield f"{sb}{sm}"     # 'yamahayzf_r3'
+    yield f"{sb}{tm}"     # 'yamahayzfr3'
 
-    # cache
-    if q in _CACHE and (time.time() - _CACHE[q]["t"] < 86400):
-        return _CACHE[q]["url"]
 
-    params = {
-        "q": q,
-        "searchType": "image",
-        "num": 1,
-        "cx": GOOGLE_CSE_ID,
-        "key": GOOGLE_API_KEY,
-        # optional bias toward manufacturer site helps quality
-        "siteSearch": mfr_domain or "",
-        "safe": "active",
-    }
+# -------------------------------
+# Optional Google fallback
+# -------------------------------
+
+def _google_first_image(query: str) -> Optional[str]:
+    """
+    Try to use a google image helper if present; otherwise return None.
+    This keeps the module safe even if Google integration isn’t installed.
+    """
     try:
-        r = requests.get("https://www.googleapis.com/customsearch/v1", params=params, timeout=6)
-        r.raise_for_status()
-        items = (r.json().get("items") or [])
-        if items:
-            url = items[0].get("link")
-            if url:
-                _CACHE[q] = {"url": url, "t": time.time()}
-                return url
+        return search_first_image(query)  # expected to return a URL string or None
     except Exception:
         return None
-    return None
 
-def resolve_image_url(payload: dict) -> str:
+
+# -------------------------------
+# Public resolver
+# -------------------------------
+
+def resolve_image_url(
+    brand: str,
+    model: str,
+    image_query: str = "",
+    logger=None,
+) -> Optional[str]:
     """
-    Accepts the JSON body send from recommendations.js and returns a URL string.
+    Attempt to resolve a local /static image for a bike.
+    1) Normalize brand+model to keys like 'yamaha_yzfr3'
+    2) Check static/images.json
+    3) If miss, fallback to Google with image_query (or brand/model)
+    Returns a URL (absolute or /static/...) or None.
     """
-    id_ = payload.get("id")
-    brand = payload.get("brand") or payload.get("manufacturer") or ""
-    model = payload.get("model") or payload.get("name") or ""
-    query = payload.get("query") or f"{brand} {model}".strip()
-    mfr_domain = payload.get("mfr_domain")
-    local_image = payload.get("local_image")
+    # 1) local map lookup
+    for key in _key_candidates(brand, model):
+        path = _IMAGES_MAP.get(key)
+        if path:
+            url = f"/static/{path.lstrip('/')}"
+            if logger:
+                logger.info(f"[images] LOCAL  {brand} {model} -> {url} (key={key})")
+            return url
 
-    # 1) Local first
-    local = find_local_image(id_, brand, model, local_image)
-    if local:
-        return local
-
-    # 2) Google fallback
-    remote = google_image_search(query, mfr_domain)
-    if remote:
-        return remote
-
-    # 3) Last resort – generic
-    return "/static/motorcycle_ride.jpg"
+    # 2) google fallback
+    q = (image_query or "").strip() or f"{brand} {model}".strip()
+    if logger:
+        logger.info(f"[images] FALLBACK via Google: '{q}' (no local match)")
+    return _google_first_image(q)
