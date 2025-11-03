@@ -74,7 +74,6 @@
   }
 
   function perfLine(item) {
-  // prefer max_speed_mph but gracefully fallback to top_speed_mph
   const top = (item.max_speed_mph != null) ? item.max_speed_mph
              : (item.top_speed_mph != null) ? item.top_speed_mph
              : '-';
@@ -323,7 +322,6 @@ function setOpStatus(text, kind='idle') {
 
   const items = await callRecommend(pins, externals);
 
-  // ⬇⬇ important: await the snapshot creation
   const snap = await createSnapshotFrom(items);
   hasRunOnce = true;
 
@@ -534,7 +532,7 @@ chatForm && chatForm.addEventListener('submit', async (e) => {
     if (href) window.open(href, '_blank', 'noopener');
   });
 
-  // --------- Buttons
+  // --------- Buttons -------------
   btnReRun && btnReRun.addEventListener('click', async () => { await runAndSave(); });
   btnClearHistory && btnClearHistory.addEventListener('click', () => {
     history = [];
@@ -608,13 +606,12 @@ async function addDescBubbles(items) {
       (Array.isArray(it.reasons) && it.reasons.length ? it.reasons[0] : '') ||
       '';
     if (blurb) {
-      // Reuse your existing addBubble so style + timestamp match your chat UI
       addBubble(`${name}: ${blurb}`, 'bot');
     }
   }
 }
 
-  // --------- Init
+  // --------- Init----------------
   (async function init() {
     writeJSON('rr.profile', profile);
     updateMeta();

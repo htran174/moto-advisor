@@ -11,7 +11,7 @@ print("Has OPENAI_API_KEY?", bool(key))
 print("Starts with:", str(key)[:10] if key else "(none)")
 
 if not key:
-    raise SystemExit("❌ No API key found. Check your .env file path or spelling.")
+    raise SystemExit("❌ No API key found. Check .env file path or spelling.")
 
 try:
     client = OpenAI(api_key=key)

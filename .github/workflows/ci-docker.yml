@@ -38,12 +38,9 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          # Build both architectures
           platforms: linux/amd64,linux/arm64
-          # Tag latest + immutable commit tag
           tags: |
             ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          # Optional: speed up via GitHub cache
           cache-from: type=gha
           cache-to: type=gha,mode=max

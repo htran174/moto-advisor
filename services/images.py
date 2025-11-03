@@ -126,7 +126,7 @@ def google_image_search(query: str, mfr_domain: str | None = None) -> str | None
 
 def resolve_image_url(payload: dict) -> str:
     """
-    Accepts the JSON body you send from recommendations.js and returns a URL string.
+    Accepts the JSON body send from recommendations.js and returns a URL string.
     """
     id_ = payload.get("id")
     brand = payload.get("brand") or payload.get("manufacturer") or ""

@@ -105,7 +105,7 @@ def _run_recommend(profile: dict,
             if b:
                 _add(b)
 
-    # 5) Externals (normalize to your card schema)
+    # 5) Externals
     if external_items:
         for ext in external_items:
             try:
@@ -133,7 +133,7 @@ def _guess_manufacturer(label: str | None) -> str | None:
 def _normalize_external(ext: dict) -> dict:
     """
     Convert an external item (not in our catalog) into the same
-    shape your frontend cards expect.
+    shape frontend cards expect.
     """
     specs = ext.get("specs") or {}
     label = ext.get("label") or ext.get("name") or "Motorcycle"
@@ -233,7 +233,6 @@ def api_chat():
     pin_ids = []
     external_items = plan.get("external_items") or []
 
-    # apply updates and collect any pin ids (if you use them)
     for act in plan.get("actions", []):
         if act.get("type") == "UPDATE_PROFILE":
             profile.update(act.get("patch", {}) or {})
