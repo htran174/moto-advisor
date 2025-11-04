@@ -108,7 +108,7 @@ docker run --rm -p 5001:5000 --env-file .env ghcr.io/htran174/rideready:latest
 
 ## 💬 Example Query Flow
 
-![RideReady Chat Example](static/screenshots/chat_example.png)
+![RideReady Chat Example](static/screenshot/chat_example.png)
 
 ---
 
