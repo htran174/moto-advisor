@@ -25,10 +25,10 @@
 flowchart TD
     A[User Input 🧍] -->|Query| B[Flask API /api/chat]
     B --> C[Chat NLU - OpenAI gpt-4o-mini]
-    C -->|Plan + Actions| D[_run_recommend()]
+    C -->|Plan and Actions| D[_run_recommend]
     D --> E[Image Resolver Service]
     E -->|Local JSON Lookup| F[static/images.json]
     E -->|Fallback| G[Google CSE API]
     G --> H[Result URLs]
     D --> I[Frontend Recommendation Cards]
-    I --> J[Rendered Chat + Image Results]
+    I --> J[Rendered Chat and Image Results]
