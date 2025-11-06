@@ -72,7 +72,7 @@ def make_plan(user_msg: str, profile: dict, logger=None, client=None, model_name
         "\"description\":\"<short one-sentence summary of why it fits the user profile>\""
         "}\n"
         "Use numbers (not strings) for speeds/acceleration. Keep your message concise and informative.\n"
-        "If user messesge isn't about motorcycle respond with 'Please only ask about motorcycle'.\n"
+        "If user messesge is not in scope of motorcyle please kindly return a message that tell them that their out of scope and only ask about motorcyle.\n"
         "Unless user ask otherwise try to recommend common models that most US buyer can buy 2nd hand.\n"
     )
 
