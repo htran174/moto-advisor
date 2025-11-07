@@ -13,6 +13,13 @@
 **Hien Tran**  
 *Computer Science @ California State University, Fullerton*  
 💼 [LinkedIn](https://www.linkedin.com/in/hien-tran-3b4935297/)
+
+---
+## Demo Video:  
+🎥 [Watch the quick demo on LinkedIn](https://www.linkedin.com/posts/hien-tran-3b4935297_python-flask-openai-activity-7392060988163923968-ln7A?utm_source=share&utm_medium=member_desktop&rcm=ACoAAEfc8vgBQiJ9SMJLzfJp3LgsMe_mJUIFBfM)
+
+---
+
 ## 🌟 Features
 ---
 - 💬 **AI Chat Interface** — Talk naturally about your riding style, budget, and preferences.
@@ -22,9 +29,7 @@
 - 🔒 **.env-driven** — Secure API key and environment variable management.
 - 🧩 **Modular Services** — Clean separation for chat (NLU), images, and recommendation logic.
 - 🧱 **Continuous Integration (CI)** — GitHub Actions automatically builds and publishes the Docker image to GitHub Container Registry (GHCR) on every push.
-
 ---
-
 ## 🏗️ Architecture Overview
 
 ```mermaid
